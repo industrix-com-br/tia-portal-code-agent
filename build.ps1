@@ -222,9 +222,62 @@ function Invoke-Pack {
     Write-Info "Version: $Version"
     Write-Info "Files: $($files.Count)"
     
+    # Inject Security permission (required by TIA Portal)
+    Write-Step 6 8 "Injecting Security permission..."
+    Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
+    try {
+        $package = [System.IO.Packaging.Package]::Open($addinFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite)
+        $exists = $false
+        foreach ($p in $package.GetParts()) { if ($p.Uri.ToString() -match "Security") { $exists = $true } }
+        if (-not $exists) {
+            $sec = $package.CreatePart([System.Uri]::new("/Permissions/Required/Security/System.UnrestrictedAccess", [System.UriKind]::Relative), "text/plain")
+            $w = New-Object System.IO.StreamWriter($sec.GetStream())
+            $w.Write("System.UnrestrictedAccess`nTerminal window requires full UI, file I/O, environment, and process permissions")
+            $w.Close()
+        }
+        foreach ($p in $package.GetParts()) {
+            if ($p.Uri.ToString() -eq "/_rels/.rels") {
+                $rr = New-Object System.IO.StreamReader($p.GetStream())
+                $rx = $rr.ReadToEnd()
+                $rr.Close()
+                if ($rx -notmatch "UnrestrictedAccess") {
+                    $rx = $rx.Replace('<Relationship Type="Tia"', '<Relationship Type="Security" Target="/Permissions/Required/Security/System.UnrestrictedAccess" Id="System.UnrestrictedAccess" /><Relationship Type="Tia"')
+                    $rs = $p.GetStream([System.IO.FileMode]::Create)
+                    $rw = New-Object System.IO.StreamWriter($rs)
+                    $rw.Write($rx)
+                    $rw.Close()
+                }
+            }
+        }
+        Write-Ok "Security permission injected"
+    } catch { Write-Warn "Security injection skipped: $_" }
+
+    # OPC Digital Signature (required by TIA Portal)
+    Write-Step 7 8 "Signing package..."
+    try {
+        $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -match "TIA Portal Code Agent" } | Select-Object -First 1
+        if ($cert) {
+            $sigManager = New-Object System.IO.Packaging.PackageDigitalSignatureManager($package)
+            $partUris = New-Object System.Collections.Generic.List[System.Uri]
+            foreach ($p in $package.GetParts()) { $partUris.Add($p.Uri) }
+            $sigManager.Sign($partUris, $cert)
+            Write-Ok "Signed with: $($cert.Thumbprint)"
+        } else { Write-Warn "No signing certificate found" }
+    } catch { Write-Warn "Signing skipped: $_" }
+    $package.Close()
+
+    # Summary
+    Write-Step 8 8 "Package summary..."
+    $size = (Get-Item $addinFile).Length / 1KB
+    $files = Get-ChildItem $addinDir -Recurse -File
+    Write-Info "File: $addinFile"
+    Write-Info "Size: $([math]::Round($size, 1)) KB"
+    Write-Info "Version: $Version"
+    Write-Info "Files: $($files.Count)"
+
     Write-Host ""
     Write-Host "Packaging completed!" -ForegroundColor Green
-    Write-Host "  To install: copy the .addin to %APPDATA%\Siemens\Automation\Portal V21\UserAddIns" -ForegroundColor Gray
+    Write-Host "  To install: .\build.ps1 install" -ForegroundColor Gray
 }
 
 function Invoke-Run {
