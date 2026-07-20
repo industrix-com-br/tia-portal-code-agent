@@ -8,6 +8,7 @@ using TiaAgent.Application.Hashing;
 using TiaAgent.Application.Identity;
 using TiaAgent.Contracts.Abstractions;
 using TiaAgent.Mcp;
+using TiaAgent.Mcp.Tools;
 using TiaAgent.Simulator;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,10 +26,20 @@ builder.Services.AddSingleton<IContextService, ContextService>();
 builder.Services.AddSingleton<ICapabilityProvider, CapabilityProvider>();
 
 // Register MCP tool handlers
-builder.Services.AddTiaMcpTools();
+builder.Services.AddSingleton<TiaContextTools>();
+builder.Services.AddSingleton<TiaReadTools>();
+builder.Services.AddSingleton<TiaReferenceTools>();
+builder.Services.AddSingleton<TiaCompileTools>();
+builder.Services.AddSingleton<TiaChangeTools>();
 
-// Add MCP server
-builder.Services.AddMcpServer();
+// Add MCP server with HTTP transport and register tool types
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithTools<TiaContextTools>()
+    .WithTools<TiaReadTools>()
+    .WithTools<TiaReferenceTools>()
+    .WithTools<TiaCompileTools>()
+    .WithTools<TiaChangeTools>();
 
 // Configure Kestrel to listen on loopback only
 builder.WebHost.ConfigureKestrel(options =>
@@ -38,6 +49,6 @@ builder.WebHost.ConfigureKestrel(options =>
 
 var app = builder.Build();
 
-app.MapMcp();
+app.MapMcp("/mcp");
 
 app.Run();
