@@ -23,6 +23,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <NoWarn>$(NoWarn);NU1603;CA1707;CA1304;CA1305;CA1310;CA1311;CA1822;CA1848</NoWarn>
+
+    <!-- Enable NuGet package lock files and enforce locked restore in CI -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 
   <!-- Detect Siemens assemblies early so csproj conditionals can use this -->
