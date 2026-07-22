@@ -15,11 +15,12 @@
     <PublisherVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(Version)', '-.*$', ''))</PublisherVersion>
     <AddInVersion>$(PublisherVersion)</AddInVersion>
     <AddInConfigPath>$(MSBuildThisFileDirectory)Config.xml</AddInConfigPath>
-    <AddInOutputDir>$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\</AddInOutputDir>
+    <AddInBuildDir>$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\</AddInBuildDir>
+    <AddInArtifactsDir>$(MSBuildProjectDirectory)\..\..\artifacts\</AddInArtifactsDir>
     <AddInDeployDir>$(APPDATA)\Siemens\Automation\Portal V21\UserAddIns</AddInDeployDir>
     <TiaPublisherPath>$(ProgramFiles)\Siemens\Automation\Portal V21\PublicAPI\V21\Siemens.Engineering.AddIn.Publisher.exe</TiaPublisherPath>
     <OpcSignerPath>$(MSBuildThisFileDirectory)..\..\tools\OpcSigner\bin\Release\net48\OpcSigner.exe</OpcSignerPath>
-    <AddInPackagePath>$(AddInOutputDir)TiaAgent.AddIn.addin</AddInPackagePath>
+    <AddInPackagePath>$(AddInArtifactsDir)TiaAgent-$(PublisherVersion).addin</AddInPackagePath>
   </PropertyGroup>
 
   <!-- ============================================================
@@ -29,7 +30,8 @@
   <Target Name="PackAddIn">
 
     <PropertyGroup>
-      <_AddInDllPath>$(AddInOutputDir)TiaAgent.AddIn.dll</_AddInDllPath>
+      <_AddInDllPath>$(AddInBuildDir)TiaAgent.AddIn.dll</_AddInDllPath>
+      <_PublisherAddInPath>$(AddInBuildDir)TiaAgent.AddIn.addin</_PublisherAddInPath>
     </PropertyGroup>
 
     <Error Condition="!Exists('$(_AddInDllPath)')"
@@ -42,27 +44,37 @@
       <Output TaskParameter="Lines" ItemName="_ConfigLines" />
     </ReadLinesFromFile>
     <WriteLinesToFile
-      File="$(AddInOutputDir)Config.xml"
+      File="$(AddInBuildDir)Config.xml"
       Lines="@(_ConfigLines->Replace('__PRODUCT_VERSION__', '$(PublisherVersion)'))"
       Overwrite="true"
       Encoding="UTF-8" />
 
-    <!-- Run Publisher: creates .addin from Config.xml + build output -->
+    <!-- Run Publisher: creates .addin from Config.xml + build output (with retry for file locks) -->
     <Error Condition="!Exists('$(TiaPublisherPath)')"
            Text="Siemens Publisher not found at $(TiaPublisherPath). Install TIA Portal V21." />
     <Exec
-      Command="&quot;$(TiaPublisherPath)&quot; -f &quot;$(AddInOutputDir)Config.xml&quot; -c -v -l &quot;$(AddInOutputDir)publish.log&quot;"
+      Command="powershell -NoProfile -Command &quot; for ($attempt = 1; $attempt -le 12; $attempt++) { try { &amp; '$(TiaPublisherPath)' -f '$(AddInBuildDir)Config.xml' -c -v -l '$(AddInBuildDir)publish.log'; if ($LASTEXITCODE -ne 0) { throw 'Publisher failed' }; break } catch { if ($attempt -eq 12) { throw }; Write-Host &quot;Publisher locked; retrying ($attempt/12)...&quot;; Start-Sleep -Milliseconds 500 } } &quot;"
       ConsoleToMSBuild="true" />
 
     <!-- Sign the .addin package with OpcSigner -->
     <Exec
-      Command="&quot;$(OpcSignerPath)&quot; &quot;$(AddInPackagePath)&quot;"
-      Condition="Exists('$(AddInPackagePath)') AND Exists('$(OpcSignerPath)')"
+      Command="&quot;$(OpcSignerPath)&quot; &quot;$(_PublisherAddInPath)&quot;"
+      Condition="Exists('$(_PublisherAddInPath)') AND Exists('$(OpcSignerPath)')"
       ConsoleToMSBuild="true" />
     <Warning Text="OpcSigner not found at $(OpcSignerPath). Package remains unsigned."
-             Condition="Exists('$(AddInPackagePath)') AND !Exists('$(OpcSignerPath)')" />
+             Condition="Exists('$(_PublisherAddInPath)') AND !Exists('$(OpcSignerPath)')" />
 
-    <Message Importance="high" Text="=== Add-In package ready: $(AddInPackagePath) ===" />
+    <!-- Deliver versioned .addin to artifacts/ -->
+    <MakeDir Directories="$(AddInArtifactsDir)" Condition="!Exists('$(AddInArtifactsDir)')" />
+    <Copy SourceFiles="$(_PublisherAddInPath)"
+          DestinationFiles="$(AddInPackagePath)"
+          SkipUnchangedFiles="true"
+          Retries="12"
+          RetryDelayMilliseconds="500"
+          Condition="Exists('$(_PublisherAddInPath)')" />
+
+    <Message Importance="high" Text="=== Add-In package ready: $(AddInPackagePath) ==="
+             Condition="Exists('$(AddInPackagePath)')" />
   </Target>
 
   <!-- ============================================================
@@ -95,15 +107,14 @@
 
     <Message Importance="high" Text="=== Installing Add-In to TIA Portal ===" />
 
+    <MakeDir Directories="$(AddInDeployDir)" Condition="!Exists('$(AddInDeployDir)')" />
     <Copy SourceFiles="$(AddInPackagePath)"
           DestinationFolder="$(AddInDeployDir)"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(AddInDeployDir)')" />
+          Retries="12"
+          RetryDelayMilliseconds="500" />
     <Message Importance="high"
-             Text="Deployed to $(AddInDeployDir)\TiaAgent.AddIn.addin"
-             Condition="Exists('$(AddInDeployDir)')" />
-    <Warning Text="UserAddIns directory not found at $(AddInDeployDir). TIA Portal V21 may not be installed."
-             Condition="!Exists('$(AddInDeployDir)')" />
+             Text="Deployed to $(AddInDeployDir)\TiaAgent-$(PublisherVersion).addin" />
 
     <Message Importance="high" Text="=== Add-In installed. Restart TIA Portal to load. ===" />
   </Target>

@@ -51,7 +51,7 @@ function Resolve-CommitSha {
 
 $ProductVersion = Resolve-ProductVersion -ExplicitVersion $Version
 $CommitSha = Resolve-CommitSha
-$MsBuildVersionArguments = @("/p:Version=$ProductVersion", "/p:SourceRevisionId=$CommitSha")
+$MsBuildVersionArguments = @("-p:Version=$ProductVersion", "-p:SourceRevisionId=$CommitSha")
 
 # Auto-detect TIA Portal V21 assemblies.
 $tiaBasePath = "C:\Program Files\Siemens\Automation\Portal V21"
@@ -76,7 +76,6 @@ function Write-Header($text) {
 }
 function Write-Step($step, $total, $text) { Write-Host "[$step/$total] $text" -ForegroundColor Yellow }
 function Write-Ok($text) { Write-Host "  OK: $text" -ForegroundColor Green }
-function Write-Fail($text) { Write-Host "  FAIL: $text" -ForegroundColor Red }
 function Write-Info($text) { Write-Host "  $text" -ForegroundColor Gray }
 
 function Invoke-Dotnet {
