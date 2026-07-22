@@ -1,7 +1,6 @@
 #if SIEMENS
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,7 +28,6 @@ public sealed class ProjectTreeProvider : ProjectTreeAddInProvider
     {
         AddInLogger.Info("GetContextMenuAddIns called");
         yield return new TiaAgentContextMenu(_tiaPortal);
-        yield return new TiaAgentTestContextMenu(_tiaPortal);
     }
 }
 
@@ -37,26 +35,24 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
 {
     private readonly TiaPortal _tiaPortal;
 
-    public TiaAgentContextMenu(TiaPortal tiaPortal) : base("AI Assistant")
+    public TiaAgentContextMenu(TiaPortal tiaPortal) : base("AI Code Agent")
     {
         _tiaPortal = tiaPortal;
     }
 
     protected override void BuildContextMenuItems(ContextMenuAddInRoot addInRoot)
     {
-        var aiSubmenu = addInRoot.Items.AddSubmenu("AI Assistant");
-
-        aiSubmenu.Items.AddActionItem<IEngineeringObject>(
+        addInRoot.Items.AddActionItem<IEngineeringObject>(
             "Explain selected object",
             (MenuSelectionProvider<IEngineeringObject> selection) =>
                 HandleAction("explain", selection));
 
-        aiSubmenu.Items.AddActionItem<IEngineeringObject>(
+        addInRoot.Items.AddActionItem<IEngineeringObject>(
             "Review selected object",
             (MenuSelectionProvider<IEngineeringObject> selection) =>
                 HandleAction("review", selection));
 
-        aiSubmenu.Items.AddActionItem<IEngineeringObject>(
+        addInRoot.Items.AddActionItem<IEngineeringObject>(
             "Propose change",
             (MenuSelectionProvider<IEngineeringObject> selection) =>
                 HandleAction("propose", selection));
@@ -71,14 +67,14 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
             var enumerator = objects.GetEnumerator();
             if (!enumerator.MoveNext())
             {
-                MessageBox.Show("No object selected.", "TIA Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("No object selected.", "AI Code Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             var selectedObj = enumerator.Current as IEngineeringObject;
             if (selectedObj == null)
             {
-                MessageBox.Show("Selected object is not a TIA engineering object.", "TIA Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Selected object is not a TIA engineering object.", "AI Code Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             var selectionSnapshot = SelectionSnapshotFactory.Create(selectedObj);
@@ -93,7 +89,7 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
         catch (Exception ex)
         {
             AddInLogger.Error($"Action '{action}' failed", ex);
-            MessageBox.Show("Error: " + ex.Message, "TIA Agent", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("Error: " + ex.Message, "AI Code Agent", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -204,55 +200,4 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
     }
 }
 
-public sealed class TiaAgentTestContextMenu : ContextMenuAddIn
-{
-    private readonly TiaPortal _tiaPortal;
-
-    public TiaAgentTestContextMenu(TiaPortal tiaPortal) : base("TIA Agent Diagnostics")
-    {
-        _tiaPortal = tiaPortal;
-    }
-
-    protected override void BuildContextMenuItems(ContextMenuAddInRoot addInRoot)
-    {
-        addInRoot.Items.AddActionItem<IEngineeringObject>(
-            "Test Integration",
-            (MenuSelectionProvider<IEngineeringObject> selection) =>
-            {
-                try
-                {
-                    AddInLogger.Info("Test Integration action triggered");
-
-                    var version = typeof(TiaAgentTestContextMenu).Assembly.GetName().Version?.ToString() ?? "unknown";
-                    var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                    var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
-                    var config = AddInServices.Config;
-
-                    var msg = "TIA Portal Code Agent - Integration Test\n"
-                            + "==========================================\n\n"
-                            + "Status:    LOADED AND FUNCTIONAL\n"
-                            + "Version:   " + version + "\n"
-                            + "Timestamp: " + timestamp + "\n"
-                            + "Process:   " + pid + "\n\n"
-                            + "Bridge URL: " + config.BridgeBaseUrl + "\n"
-                            + "Timeout:    " + config.RequestTimeoutSeconds + "s\n\n"
-                            + "The Add-In is correctly installed and operational.\n"
-                            + "Context menu actions are responding.\n\n"
-                            + "MCP Server: Czarnak/tia-portal-mcp (via stdio)\n"
-                            + "Log: " + Path.Combine(
-                                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                                "TiaAgent", "addin.log");
-
-                    AddInLogger.Info($"Test Integration passed - v{version} PID={pid}");
-                    MessageBox.Show(msg, "TIA Agent - Integration Test", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    AddInLogger.Error("Test Integration failed", ex);
-                    MessageBox.Show("Integration test failed: " + ex.Message,
-                        "TIA Agent - Integration Test", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            });
-    }
-}
 #endif

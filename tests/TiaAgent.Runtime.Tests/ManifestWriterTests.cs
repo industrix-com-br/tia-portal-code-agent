@@ -65,10 +65,8 @@ public class ManifestWriterTests
             var index = i;
             tasks.Add(Task.Run(() =>
             {
-                var tempPath = Path.Combine(_testDir, $"runtime.json.tmp.{index}");
                 var content = $"{{\"schemaVersion\":1,\"status\":\"ready\",\"index\":{index}}}";
-                File.WriteAllText(tempPath, content);
-                File.Move(tempPath, manifestPath, true);
+                ManifestWriter.WriteAtomic(manifestPath, content);
             }));
         }
 
@@ -77,5 +75,9 @@ public class ManifestWriterTests
         // File should be valid JSON
         var finalContent = File.ReadAllText(manifestPath);
         finalContent.Should().Contain("\"schemaVersion\":1");
+
+        // No stale temporary files should remain
+        var tempFiles = Directory.GetFiles(_testDir, "*.tmp.*");
+        tempFiles.Should().BeEmpty("all temporary files should be cleaned up");
     }
 }

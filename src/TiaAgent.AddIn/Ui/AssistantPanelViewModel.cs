@@ -5,11 +5,11 @@ using System.Runtime.CompilerServices;
 namespace TiaAgent.AddIn.Ui;
 
 /// <summary>
-/// ViewModel for the AI Assistant panel. Drives data binding in the WPF UserControl.
+/// ViewModel for the AI Code Agent panel. Drives data binding in the WPF UserControl.
 /// </summary>
 public sealed class AssistantPanelViewModel : INotifyPropertyChanged
 {
-    private string _title = "AI Assistant";
+    private string _title = "AI Code Agent";
     private string _content = "";
     private string _status = "Ready";
     private bool _isBusy;
@@ -43,7 +43,7 @@ public sealed class AssistantPanelViewModel : INotifyPropertyChanged
     /// </summary>
     public void ShowResult(string action, string result)
     {
-        Title = "AI Assistant - " + action;
+        Title = "AI Code Agent - " + action;
         Content = result;
         Status = "Completed";
         IsBusy = false;
@@ -54,7 +54,7 @@ public sealed class AssistantPanelViewModel : INotifyPropertyChanged
     /// </summary>
     public void ShowError(string message)
     {
-        Title = "AI Assistant - Error";
+        Title = "AI Code Agent - Error";
         Content = message;
         Status = "Error";
         IsBusy = false;
@@ -65,7 +65,7 @@ public sealed class AssistantPanelViewModel : INotifyPropertyChanged
     /// </summary>
     public void ShowLoading(string action)
     {
-        Title = "AI Assistant - " + action;
+        Title = "AI Code Agent - " + action;
         Content = "Processing...";
         Status = "Working...";
         IsBusy = true;
@@ -76,7 +76,7 @@ public sealed class AssistantPanelViewModel : INotifyPropertyChanged
     /// </summary>
     public void ShowWarning(string message)
     {
-        Title = "AI Assistant";
+        Title = "AI Code Agent";
         Content = message;
         Status = "Warning";
         IsBusy = false;

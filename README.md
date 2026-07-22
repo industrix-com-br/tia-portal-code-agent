@@ -126,6 +126,11 @@ This is an independent project and is not affiliated with, endorsed by, or suppo
 
 Siemens, SIMATIC, TIA Portal, and related product names are trademarks of their respective owners.
 
+## Third-party assets
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party
+asset attribution and licensing information.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).

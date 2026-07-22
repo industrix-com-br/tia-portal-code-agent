@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageConfiguration xmlns="http://www.siemens.com/automation/Openness/AddIn/Publisher/V21">
-  <Author>TIA Portal Code Agent</Author>
+  <Author>allan@industrix.it</Author>
   <AddInVersion>V21</AddInVersion>
   <Description>AI-powered engineering assistant for TIA Portal V21</Description>
   <DisplayInMultiuser />

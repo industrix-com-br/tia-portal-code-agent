@@ -278,6 +278,13 @@ function Invoke-Pack {
         # Publish only after signing and verification have completed.
         Move-Item -LiteralPath $temporaryAddinFile -Destination $addinFile -Force -ErrorAction Stop
 
+        # Copy THIRD_PARTY_NOTICES.md beside the .addin
+        $notices = "$Root\THIRD_PARTY_NOTICES.md"
+        if (Test-Path $notices) {
+            Copy-Item $notices "$packDir\THIRD_PARTY_NOTICES.md" -Force
+            Write-Ok "THIRD_PARTY_NOTICES.md copied to artifacts"
+        }
+
         # Summary
         $size = (Get-Item $addinFile).Length / 1KB
         Write-Info "File: $addinFile"
@@ -459,7 +466,7 @@ function Invoke-Install {
     Write-Host "  2. Go to Options > Settings > Add-Ins" -ForegroundColor White
     Write-Host "  3. Activate 'TIA Portal Code Agent'" -ForegroundColor White
     Write-Host ""
-    Write-Host "To test: Right-click in project tree > TIA Agent Diagnostics > Test Integration" -ForegroundColor Yellow
+    Write-Host "To test: Right-click in project tree > AI Code Agent > Explain selected object" -ForegroundColor Yellow
     Write-Host ""
 }
 
