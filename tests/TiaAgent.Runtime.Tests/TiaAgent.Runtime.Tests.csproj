@@ -22,7 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\TiaAgent.AddIn\TiaAgent.AddIn.csproj" />
     <ProjectReference Include="..\..\src\TiaAgent.Contracts\TiaAgent.Contracts.csproj" />
   </ItemGroup>
 

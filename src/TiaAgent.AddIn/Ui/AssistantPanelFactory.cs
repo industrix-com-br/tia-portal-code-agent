@@ -11,18 +11,18 @@ public static class AssistantPanelFactory
 {
     public static void ShowResult(string action, string result)
     {
-        var title = "TIA Agent - " + action;
+        var title = "AI Code Agent - " + action;
         MessageBox.Show(result, title, MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     public static void ShowError(string message)
     {
-        MessageBox.Show(message, "TIA Agent - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        MessageBox.Show(message, "AI Code Agent - Error", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     public static void ShowWarning(string message)
     {
-        MessageBox.Show(message, "TIA Agent - Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+        MessageBox.Show(message, "AI Code Agent - Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     public static void ShowLoading(string action)

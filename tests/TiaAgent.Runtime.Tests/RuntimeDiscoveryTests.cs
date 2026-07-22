@@ -1,6 +1,5 @@
 #if SIEMENS
 using FluentAssertions;
-using TiaAgent.AddIn.Runtime;
 using Xunit;
 
 namespace TiaAgent.Runtime.Tests;

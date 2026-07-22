@@ -6,6 +6,15 @@ namespace TiaAgent.ArchitectureTests;
 
 public class DependencyTests
 {
+    private static Assembly LoadAddInAssembly()
+    {
+        // Load the AddIn assembly by path to avoid cross-framework ProjectReference (NU1702).
+        // The AddIn targets net48; this test project targets net8.0.
+        var baseDir = AppContext.BaseDirectory;
+        var addInPath = Path.Combine(baseDir, "..", "..", "..", "..", "..",
+            "src", "TiaAgent.AddIn", "bin", "Release", "net48", "TiaAgent.AddIn.dll");
+        return Assembly.LoadFrom(Path.GetFullPath(addInPath));
+    }
     [Fact]
     public void Contracts_ShouldNotReferenceSiemens()
     {
@@ -38,7 +47,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceOpenCode()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "TiaAgent.OpenCode",
@@ -48,7 +57,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceApplication()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "TiaAgent.Application",
@@ -58,7 +67,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceBridge()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "TiaAgent.Bridge",
@@ -68,7 +77,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceMicrosoftExtensionsLogging()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "Microsoft.Extensions.Logging.Abstractions",
@@ -78,7 +87,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceMicrosoftExtensionsDependencyInjection()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "Microsoft.Extensions.DependencyInjection.Abstractions",
@@ -88,7 +97,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceMicrosoftBclAsyncInterfaces()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "Microsoft.Bcl.AsyncInterfaces",
@@ -98,7 +107,7 @@ public class DependencyTests
     [Fact]
     public void AddIn_ShouldNotReferenceSystemTextJson()
     {
-        var assembly = typeof(TiaAgent.AddIn.Diagnostics.AddInLogger).Assembly;
+        var assembly = LoadAddInAssembly();
         var references = assembly.GetReferencedAssemblies();
         references.Should().NotContain(r =>
             r.Name == "System.Text.Json",
