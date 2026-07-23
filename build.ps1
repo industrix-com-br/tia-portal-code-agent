@@ -140,7 +140,8 @@ function Invoke-PackCli {
     $outputDir = "$Root\artifacts"
     if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir -Force | Out-Null }
 
-    $payloadDir = "$Root\src\TiaAgent.Cli\payload"
+    # Use a staging directory separate from the Payload source directory
+    $payloadDir = "$outputDir\cli-payload"
     if (Test-Path $payloadDir) { Remove-Item $payloadDir -Recurse -Force }
     New-Item -ItemType Directory -Path "$payloadDir\Bridge" -Force | Out-Null
     New-Item -ItemType Directory -Path "$payloadDir\AddIn" -Force | Out-Null
