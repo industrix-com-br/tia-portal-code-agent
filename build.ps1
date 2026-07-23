@@ -191,6 +191,22 @@ function Invoke-PackCli {
         ([System.BitConverter]::ToString($hb)).Replace("-", "").ToLowerInvariant()
     } else { "" }
 
+    # Resolve addin hash and size from the bundled file
+    $addinHash = ""
+    $addinSize = 0
+    if (Test-Path "$payloadDir\AddIn") {
+        $addinFile = Get-ChildItem "$payloadDir\AddIn" -Filter "*.addin" | Select-Object -First 1
+        if ($addinFile) {
+            $addinStream = [System.IO.File]::OpenRead($addinFile.FullName)
+            $addinSha = [System.Security.Cryptography.SHA256]::Create()
+            $addinHashBytes = $addinSha.ComputeHash($addinStream)
+            $addinStream.Close()
+            $addinSha.Dispose()
+            $addinHash = ([System.BitConverter]::ToString($addinHashBytes)).Replace("-", "").ToLowerInvariant()
+            $addinSize = $addinFile.Length
+        }
+    }
+
     $manifestData = @{
         schemaVersion = 1
         productVersion = $ProductVersion
@@ -211,8 +227,8 @@ function Invoke-PackCli {
             addin = @{
                 relativePath = $addinRelativePath
                 version = $ProductVersion
-                sha256Hash = ""
-                sizeBytes = 0
+                sha256Hash = $addinHash
+                sizeBytes = $addinSize
             }
         }
         files = $filesList

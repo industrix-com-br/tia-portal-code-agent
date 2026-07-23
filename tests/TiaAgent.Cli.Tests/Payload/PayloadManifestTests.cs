@@ -98,4 +98,20 @@ public sealed class PayloadManifestTests : IDisposable
         var resolved = PayloadLocator.GetBundledPayloadDirectory(customPath);
         resolved.Should().Be(subPayload);
     }
+
+    [Fact]
+    public void PayloadLocator_GetBundledPayloadDirectory_WithNoPayloadSubdirectory_ShouldFallbackToBasePath()
+    {
+        var customPath = _tempDirectory;
+
+        var resolved = PayloadLocator.GetBundledPayloadDirectory(customPath);
+        resolved.Should().Be(customPath);
+    }
+
+    [Fact]
+    public void PayloadLocator_GetBundledPayloadDirectory_WithNull_ShouldReturnBaseDirectory()
+    {
+        var resolved = PayloadLocator.GetBundledPayloadDirectory(null);
+        resolved.Should().Be(AppContext.BaseDirectory);
+    }
 }

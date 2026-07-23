@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
-using System.Text.Json;
 using TiaAgent.Cli.Layout;
 
 namespace TiaAgent.Cli.Payload;
@@ -31,10 +30,7 @@ public static class PayloadStore
             throw new ArgumentException("Payload directory cannot be null or empty.", nameof(payloadDirectory));
         }
 
-        if (manifest == null)
-        {
-            throw new ArgumentNullException(nameof(manifest));
-        }
+        ArgumentNullException.ThrowIfNull(manifest);
 
         var manifestPath = Path.Combine(payloadDirectory, ManifestFileName);
         ManifestStore.WriteAtomic(manifestPath, manifest);

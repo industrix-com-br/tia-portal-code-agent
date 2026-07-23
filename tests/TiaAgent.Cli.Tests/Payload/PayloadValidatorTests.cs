@@ -211,4 +211,20 @@ public sealed class PayloadValidatorTests : IDisposable
         result.IsValid.Should().BeFalse();
         result.Errors.Should().ContainMatch("*Prohibited Siemens runtime assembly found in payload*");
     }
+
+    [Fact]
+    public void ValidatePayload_WithEmptyFilesList_ReturnsFailure()
+    {
+        var manifest = new PayloadManifest
+        {
+            ProductVersion = "0.2.0-beta.1",
+            Files = { }
+        };
+        PayloadStore.WriteManifest(_tempDirectory, manifest);
+
+        var result = PayloadValidator.ValidatePayload(_tempDirectory);
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().ContainMatch("*does not contain any file entries*");
+    }
 }
