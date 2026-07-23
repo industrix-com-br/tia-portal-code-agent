@@ -156,10 +156,10 @@ jobs:
 
           # Verify manifest version matches tag
           $manifest = Get-Content "artifacts/release-manifest.json" | ConvertFrom-Json
-          if ($manifest.version -ne $EXPECTED_VERSION) {
-            throw "Manifest version '$($manifest.version)' does not match tag version '$EXPECTED_VERSION'"
+          if ($manifest.productVersion -ne $EXPECTED_VERSION) {
+            throw "Manifest version '$($manifest.productVersion)' does not match tag version '$EXPECTED_VERSION'"
           }
-          Write-Host "  Manifest version: OK ($($manifest.version))"
+          Write-Host "  Manifest version: OK ($($manifest.productVersion))"
 
           # Verify manifest commit matches HEAD
           if ($manifest.commitSha -ne $EXPECTED_COMMIT) {
