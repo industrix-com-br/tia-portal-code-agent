@@ -3,19 +3,66 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      channel: ${{ steps.parse.outputs.channel }}
+      is-prerelease: ${{ steps.parse.outputs.is-prerelease }}
+      tag: ${{ steps.parse.outputs.tag }}
+
+    steps:
+      - name: Parse and validate tag
+        id: parse
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          TAG="$REF_NAME"
+          echo "Tag: $TAG"
+
+          # Validate SemVer pattern: vX.Y.Z or vX.Y.Z-channel.N
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Invalid tag format: '$TAG'. Expected vX.Y.Z or vX.Y.Z-channel.N (channel = alpha|beta|rc)"
+            exit 1
+          fi
+
+          VERSION="${BASH_REMATCH[1]}"
+          SUFFIX="${BASH_REMATCH[2]}"
+
+          if [[ -n "$SUFFIX" ]]; then
+            CHANNEL="${BASH_REMATCH[3]}"
+            IS_PRERELEASE="true"
+          else
+            CHANNEL="stable"
+            IS_PRERELEASE="false"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "is-prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          echo "Parsed: version=$VERSION channel=$CHANNEL prerelease=$IS_PRERELEASE"
+
   package-and-verify:
     name: Package and verify release
+    needs: validate-tag
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
     timeout-minutes: 30
 
@@ -71,6 +118,45 @@ jobs:
         run: |
           ./build.ps1 verify-release
 
+      - name: Validate artifacts match tag and commit
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Validating artifacts match tag and commit..."
+          Write-Host "  Expected version: $EXPECTED_VERSION"
+          Write-Host "  Expected commit:  $EXPECTED_COMMIT"
+
+          # Verify manifest version matches tag
+          $manifest = Get-Content "artifacts/release-manifest.json" | ConvertFrom-Json
+          if ($manifest.version -ne $EXPECTED_VERSION) {
+            throw "Manifest version '$($manifest.version)' does not match tag version '$EXPECTED_VERSION'"
+          }
+          Write-Host "  Manifest version: OK ($($manifest.version))"
+
+          # Verify manifest commit matches HEAD
+          if ($manifest.commitSha -ne $EXPECTED_COMMIT) {
+            throw "Manifest commit '$($manifest.commitSha)' does not match expected commit '$EXPECTED_COMMIT'"
+          }
+          Write-Host "  Manifest commit: OK ($($manifest.commitSha))"
+
+          # Verify checksums file exists and is non-empty
+          if (-not (Test-Path "artifacts/SHA256SUMS") -or (Get-Item "artifacts/SHA256SUMS").Length -eq 0) {
+            throw "SHA256SUMS file is missing or empty"
+          }
+          Write-Host "  SHA256SUMS: OK"
+
+          # Verify SBOM exists
+          if (-not (Test-Path "artifacts/sbom.spdx.json")) {
+            throw "SBOM file is missing"
+          }
+          Write-Host "  SBOM: OK"
+
+          Write-Host "All artifact validations passed."
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -83,3 +169,123 @@ jobs:
             artifacts/sbom.spdx.json
             artifacts/THIRD_PARTY_NOTICES.md
           if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [validate-tag, package-and-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la artifacts/
+          echo ""
+          echo "=== .nupkg files ==="
+          ls -la artifacts/*.nupkg 2>/dev/null || echo "No .nupkg files"
+          echo ""
+          echo "=== .addin files ==="
+          ls -la artifacts/*.addin 2>/dev/null || echo "No .addin files"
+
+      - name: Check for existing release (idempotency guard)
+        id: check-existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking if release for $TAG already exists..."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release for $TAG already exists — skipping publication."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No existing release found. Proceeding with publication."
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check-existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          IS_PRERELEASE: ${{ needs.validate-tag.outputs.is-prerelease }}
+          CHANNEL: ${{ needs.validate-tag.outputs.channel }}
+        run: |
+          set -euo pipefail
+
+          # Create release with appropriate prerelease flag
+          PRERELEASE_FLAG=""
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Release $TAG" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            artifacts/*.addin \
+            artifacts/*.nupkg \
+            artifacts/release-manifest.json \
+            artifacts/SHA256SUMS \
+            artifacts/sbom.spdx.json \
+            artifacts/THIRD_PARTY_NOTICES.md
+
+          echo "GitHub Release created successfully."
+
+      - name: Check for existing NuGet package (idempotency guard)
+        id: check-nuget
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${NUGET_API_KEY:-}" ]]; then
+            echo "::warning::NUGET_API_KEY secret not configured — skipping NuGet idempotency check."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Checking if TiaAgent.Cli $VERSION already exists on NuGet..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.nuget.org/v3-flatcontainer/tiaagent.cli/$VERSION/tiaagent.cli.$VERSION.nupkg" || true)
+
+          if [[ "$HTTP_STATUS" == "200" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::TiaAgent.Cli $VERSION already published to NuGet — skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Package not found on NuGet. Proceeding with publication."
+          fi
+
+      - name: Publish CLI to NuGet
+        if: steps.check-nuget.outputs.exists != 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          NUPKG=$(ls artifacts/TiaAgent.Cli.*.nupkg | head -1)
+
+          if [[ -z "$NUPKG" ]]; then
+            echo "::error::No .nupkg file found in artifacts/"
+            exit 1
+          fi
+
+          echo "Publishing $NUPKG to NuGet.org..."
+          dotnet nuget push "$NUPKG" \
+            --api-key "$NUGET_API_KEY" \
+            --source "https://api.nuget.org/v3/index.json" \
+            --skip-duplicate
+
+          echo "NuGet publication completed."
