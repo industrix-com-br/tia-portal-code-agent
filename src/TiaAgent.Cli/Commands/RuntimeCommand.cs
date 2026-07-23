@@ -274,29 +274,30 @@ public static class RuntimeCommand
                 Details = $"Minimum supported: v{meta.MinimumVersion}, Tested: v{meta.TestedVersion}."
             });
 
-            // 4. MCP Integration Check
-            var mcpOnPath = DoctorCommand.IsExecutableOnPath("tia-mcp") || DoctorCommand.IsExecutableOnPath("TiaMcpServer");
-            if (mcpOnPath)
+        }
+
+        // 4. MCP Integration Check (shared infrastructure, not per-runtime)
+        var mcpOnPath = DoctorCommand.IsExecutableOnPath("tia-mcp") || DoctorCommand.IsExecutableOnPath("TiaMcpServer");
+        if (mcpOnPath)
+        {
+            report.Checks.Add(new DoctorCheckResult
             {
-                report.Checks.Add(new DoctorCheckResult
-                {
-                    Category = "MCP",
-                    Name = $"MCP Config ({id})",
-                    Status = "OK",
-                    Details = $"MCP server adapter verified for '{id}' via stdio transport (tia-mcp)."
-                });
-            }
-            else
+                Category = "MCP",
+                Name = "MCP Server",
+                Status = "OK",
+                Details = "MCP server executable verified on PATH via stdio transport (tia-mcp)."
+            });
+        }
+        else
+        {
+            report.Checks.Add(new DoctorCheckResult
             {
-                report.Checks.Add(new DoctorCheckResult
-                {
-                    Category = "MCP",
-                    Name = $"MCP Config ({id})",
-                    Status = isDefault ? "FAIL" : "WARN",
-                    Details = "Required TIA MCP Server executable ('tia-mcp') missing.",
-                    Recommendation = "Install via: dotnet tool install -g TiaMcpServer"
-                });
-            }
+                Category = "MCP",
+                Name = "MCP Server",
+                Status = "FAIL",
+                Details = "Required TIA MCP Server executable ('tia-mcp') missing.",
+                Recommendation = "Install via: dotnet tool install -g TiaMcpServer"
+            });
         }
 
         // 5. Secrets Isolation Check
