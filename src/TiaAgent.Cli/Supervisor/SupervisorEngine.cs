@@ -431,6 +431,14 @@ public static class SupervisorEngine
         TextWriter stdout,
         TextWriter stderr)
     {
+        return GetStatusAsync(options, stdout, stderr).GetAwaiter().GetResult();
+    }
+
+    public static async Task<int> GetStatusAsync(
+        StatusOptions options,
+        TextWriter stdout,
+        TextWriter stderr)
+    {
         var layout = new TiaAgentLayout(options.CustomRoot);
         var manifestPath = Path.Combine(layout.RuntimePath, "runtime.json");
 
@@ -468,7 +476,7 @@ public static class SupervisorEngine
             {
                 try
                 {
-                    var proc = Process.GetProcessById(manifest.SupervisorPid);
+                    using var proc = Process.GetProcessById(manifest.SupervisorPid);
                     supervisorRunning = !proc.HasExited;
                 }
                 catch { }
@@ -478,14 +486,14 @@ public static class SupervisorEngine
             {
                 try
                 {
-                    var proc = Process.GetProcessById(manifest.Services.Bridge.Pid);
+                    using var proc = Process.GetProcessById(manifest.Services.Bridge.Pid);
                     bridgeRunning = !proc.HasExited;
                 }
                 catch { }
 
                 if (bridgeRunning && !string.IsNullOrEmpty(manifest.Services.Bridge.HealthUrl))
                 {
-                    bridgeHealthy = HealthChecker.IsHealthyAsync(manifest.Services.Bridge.HealthUrl).GetAwaiter().GetResult();
+                    bridgeHealthy = await HealthChecker.IsHealthyAsync(manifest.Services.Bridge.HealthUrl).ConfigureAwait(false);
                 }
             }
 
@@ -493,14 +501,14 @@ public static class SupervisorEngine
             {
                 try
                 {
-                    var proc = Process.GetProcessById(manifest.Services.OpenCode.Pid);
+                    using var proc = Process.GetProcessById(manifest.Services.OpenCode.Pid);
                     opencodeRunning = !proc.HasExited;
                 }
                 catch { }
 
                 if (opencodeRunning && !string.IsNullOrEmpty(manifest.Services.OpenCode.HealthUrl))
                 {
-                    opencodeHealthy = HealthChecker.IsHealthyAsync(manifest.Services.OpenCode.HealthUrl, manifest.Services.OpenCode.Port).GetAwaiter().GetResult();
+                    opencodeHealthy = await HealthChecker.IsHealthyAsync(manifest.Services.OpenCode.HealthUrl, manifest.Services.OpenCode.Port).ConfigureAwait(false);
                 }
             }
         }
@@ -763,6 +771,8 @@ public static class SupervisorEngine
                     {
                         var line = await proc.StandardOutput.ReadLineAsync().ConfigureAwait(false);
                         if (line != null) await writer.WriteLineAsync(line).ConfigureAwait(false);
+                        var errLine = await proc.StandardError.ReadLineAsync().ConfigureAwait(false);
+                        if (errLine != null) await writer.WriteLineAsync(errLine).ConfigureAwait(false);
                     }
                 }
                 catch { }
@@ -780,7 +790,7 @@ public static class SupervisorEngine
     {
         try
         {
-            var proc = Process.GetProcessById(pid);
+            using var proc = Process.GetProcessById(pid);
             if (!proc.HasExited)
             {
                 if (force)
@@ -834,12 +844,12 @@ public static class SupervisorEngine
                 var manifest = ManifestStore.Read<RuntimeManifest>(manifestPath);
                 if (manifest.Services.Bridge.Pid > 0)
                 {
-                    try { Process.GetProcessById(manifest.Services.Bridge.Pid); }
+                    try { using var proc = Process.GetProcessById(manifest.Services.Bridge.Pid); }
                     catch { manifest.Services.Bridge.Pid = 0; manifest.Services.Bridge.Status = "stopped"; }
                 }
                 if (manifest.Services.OpenCode.Pid > 0)
                 {
-                    try { Process.GetProcessById(manifest.Services.OpenCode.Pid); }
+                    try { using var proc = Process.GetProcessById(manifest.Services.OpenCode.Pid); }
                     catch { manifest.Services.OpenCode.Pid = 0; manifest.Services.OpenCode.Status = "stopped"; }
                 }
                 manifest.Status = "stopped";

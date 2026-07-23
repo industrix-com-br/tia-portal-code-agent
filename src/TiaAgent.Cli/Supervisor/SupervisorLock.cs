@@ -50,6 +50,19 @@ public sealed class SupervisorLock : IDisposable
             CheckAndCleanStaleLock(lockFilePath, ref mutex, ref createdNew);
         }
 
+        // If mutex is still null after fallback attempts, try once more
+        if (mutex == null)
+        {
+            try
+            {
+                mutex = new Mutex(false, MutexName, out createdNew);
+            }
+            catch
+            {
+                throw new InvalidOperationException("Unable to create supervisor mutex. Another supervisor may be running or the system may be unstable.");
+            }
+        }
+
         var instanceId = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Random.Shared.Next(1000, 10000);
         var currentPid = Environment.ProcessId;
 
@@ -62,7 +75,7 @@ public sealed class SupervisorLock : IDisposable
 
         ManifestStore.WriteAtomic(lockFilePath, lockData);
 
-        return new SupervisorLock(mutex!, createdNew, instanceId, lockFilePath);
+        return new SupervisorLock(mutex, createdNew, instanceId, lockFilePath);
     }
 
     private static void CheckAndCleanStaleLock(string lockFilePath, ref Mutex? mutex, ref bool createdNew)
