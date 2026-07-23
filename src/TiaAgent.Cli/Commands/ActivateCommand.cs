@@ -63,7 +63,19 @@ public static class ActivateCommand
         {
             installations = ManifestStore.Read<InstallationsManifest>(layout.InstallationsManifestPath);
         }
-        catch
+        catch (FileNotFoundException)
+        {
+            installations = new InstallationsManifest();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            installations = new InstallationsManifest();
+        }
+        catch (JsonException)
+        {
+            installations = new InstallationsManifest();
+        }
+        catch (IOException)
         {
             installations = new InstallationsManifest();
         }
