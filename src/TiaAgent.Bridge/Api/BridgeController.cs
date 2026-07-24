@@ -264,7 +264,25 @@ public sealed class BridgeController : IDisposable
         };
         var json = SerializeTaskStatus(result);
         var jsonBytes = Encoding.UTF8.GetBytes(json);
-        _logger.Debug($"HandleGetTaskStatus: response {result.Response?.Length ?? 0} chars → {jsonBytes.Length} bytes (UTF-8)");
+
+        // ═══════════════════════════════════════════════════════════════════
+        // BOUNDARY 4: Bridge HTTP response — log response field hex + code points
+        // ═══════════════════════════════════════════════════════════════════
+        if (!string.IsNullOrEmpty(result.Response))
+        {
+            var responseBytes = Encoding.UTF8.GetBytes(result.Response);
+            var sampleLen = Math.Min(result.Response.Length, 128);
+            var codePointSample = new System.Text.StringBuilder(sampleLen * 7);
+            for (int i = 0; i < sampleLen; i++)
+            {
+                var c = result.Response[i];
+                if (c >= 0x20 && c < 0x7F) codePointSample.Append(c);
+                else codePointSample.Append($"U+{(int)c:X4} ");
+            }
+            _logger.Info($"BridgeController [BOUNDARY 4 - HTTP response]: response={result.Response.Length} chars → {responseBytes.Length} bytes (UTF-8), jsonTotal={jsonBytes.Length} bytes");
+            _logger.Info($"BridgeController [BOUNDARY 4 - response code points]: {codePointSample}");
+        }
+
         await WriteJsonResponseAsync(response, 200, json).ConfigureAwait(false);
     }
 
@@ -457,11 +475,53 @@ public sealed class BridgeController : IDisposable
         await response.OutputStream.WriteAsync(buffer.AsMemory(), CancellationToken.None).ConfigureAwait(false);
     }
 
-    private static async Task<string?> ReadRequestBodyAsync(HttpListenerRequest request)
+    private async Task<string?> ReadRequestBodyAsync(HttpListenerRequest request)
     {
         if (request.ContentLength64 <= 0) return null;
-        using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
-        return await reader.ReadToEndAsync().ConfigureAwait(false);
+
+        // Read raw bytes first, then decode as UTF-8 explicitly.
+        // Using request.ContentEncoding is unreliable — if the client omits
+        // charset from Content-Type, HttpListener defaults to ISO-8859-1,
+        // which corrupts all non-ASCII characters (e.g. Portuguese accents,
+        // emojis, box-drawing characters).
+        var bytes = new byte[request.ContentLength64];
+        int totalRead = 0;
+        while (totalRead < bytes.Length)
+        {
+            var read = await request.InputStream.ReadAsync(
+                bytes.AsMemory(totalRead, bytes.Length - totalRead),
+                CancellationToken.None).ConfigureAwait(false);
+            if (read == 0) break;
+            totalRead += read;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // BOUNDARY: Raw request bytes — log hex sample for diagnosis
+        // ═══════════════════════════════════════════════════════════════════
+        if (bytes.Length > 0)
+        {
+            var hexLen = Math.Min(bytes.Length, 128);
+            var hex = new System.Text.StringBuilder(hexLen * 3);
+            for (int i = 0; i < hexLen; i++)
+            {
+                hex.Append($"{bytes[i]:X2} ");
+                if ((i + 1) % 32 == 0 && i + 1 < hexLen) hex.Append("\n    ");
+            }
+            // Decode as UTF-8 and show code points
+            var decoded = Encoding.UTF8.GetString(bytes);
+            var cpLen = Math.Min(decoded.Length, 128);
+            var cps = new System.Text.StringBuilder(cpLen * 7);
+            for (int i = 0; i < cpLen; i++)
+            {
+                var c = decoded[i];
+                if (c >= 0x20 && c < 0x7F) cps.Append(c);
+                else cps.Append($"U+{(int)c:X4} ");
+            }
+            _logger.Info($"ReadRequestBodyAsync [BOUNDARY - HTTP request]: {bytes.Length} bytes, hex: {hex}");
+            _logger.Info($"ReadRequestBodyAsync [BOUNDARY - HTTP request UTF-8]: {decoded.Length} chars, code points: {cps}");
+        }
+
+        return Encoding.UTF8.GetString(bytes);
     }
 
     private static string SerializeTaskAccepted(BridgeTaskAccepted a) =>

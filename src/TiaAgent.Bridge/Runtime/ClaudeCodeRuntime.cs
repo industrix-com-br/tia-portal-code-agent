@@ -47,11 +47,12 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
     public async Task<RuntimeAvailabilityResult> CheckAvailabilityAsync(CancellationToken cancellationToken)
     {
         var exeName = _executable ?? "claude";
-        var (fileName, psPrefix) = ResolveProcess(exeName);
+        var (fileName, argPrefix) = ResolveProcess(exeName);
+        LogResolvedProcess(exeName, fileName, argPrefix, "check-availability");
         try
         {
             var result = await _processRunner.RunAsync(
-                fileName, $"{psPrefix}--version".TrimStart(), null,
+                fileName, $"{argPrefix}--version".TrimStart(), null,
                 TimeSpan.FromSeconds(10),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -104,7 +105,8 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
         CancellationToken cancellationToken)
     {
         var exeName = _executable ?? "claude";
-        var (fileName, psPrefix) = ResolveProcess(exeName);
+        var (fileName, argPrefix) = ResolveProcess(exeName);
+        LogResolvedProcess(exeName, fileName, argPrefix, "execute");
 
         // Ensure MCP config exists before building arguments (--mcp-config needs the file)
         if (!string.IsNullOrEmpty(_mcpServerCommand))
@@ -114,8 +116,8 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
 
         var claudeArgs = BuildArguments(request);
         var hasMcp = !string.IsNullOrEmpty(_generatedMcpConfigPath);
-        _logger.Info($"ClaudeCodeRuntime: mcpConfig={_generatedMcpConfigPath ?? "none"}, mcpTransport={(hasMcp ? "stdio" : "none")}, mcpCommand={_mcpServerCommand ?? "none"}, psWrap={psPrefix.Length > 0}");
-        var args = $"{psPrefix}{claudeArgs}".TrimStart();
+        _logger.Info($"ClaudeCodeRuntime: mcpConfig={_generatedMcpConfigPath ?? "none"}, mcpTransport={(hasMcp ? "stdio" : "none")}, mcpCommand={_mcpServerCommand ?? "none"}, argPrefix={argPrefix.Length > 0}");
+        var args = $"{argPrefix}{claudeArgs}".TrimStart();
 
         _logger.Info($"ClaudeCodeRuntime: executing task {request.TaskId} (action={request.Action}, agent={request.AgentId}, mcpConfig={_generatedMcpConfigPath ?? "none"})");
 
@@ -166,6 +168,22 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
         // Parse Claude's JSON output
         var response = ParseClaudeOutput(result.StdOut, result.StdErr);
 
+        // ═══════════════════════════════════════════════════════════════════
+        // BOUNDARY 3: After runtime adapter parsing — log code points
+        // ═══════════════════════════════════════════════════════════════════
+        if (!string.IsNullOrEmpty(response))
+        {
+            var sampleLen = Math.Min(response.Length, 200);
+            var codePointSample = new System.Text.StringBuilder(sampleLen * 7);
+            for (int i = 0; i < sampleLen; i++)
+            {
+                var c = response[i];
+                if (c >= 0x20 && c < 0x7F) codePointSample.Append(c);
+                else codePointSample.Append($"U+{(int)c:X4} ");
+            }
+            _logger.Info($"ClaudeCodeRuntime [BOUNDARY 3 - parsed response]: {response.Length} chars, sample: {codePointSample}");
+        }
+
         if (result.ExitCode != 0 && string.IsNullOrEmpty(response))
         {
             return new AgentTaskResult
@@ -193,41 +211,81 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
     }
 
     /// <summary>
-    /// Resolves the executable for process start. If the executable is a .ps1 script
-    /// (or a bare name whose .ps1 variant exists on PATH), returns powershell.exe as
-    /// the FileName and a prefix that invokes the original script via -File.
+    /// Resolves the executable for process start with the following priority:
+    ///   1. If the executable is already a .exe/.cmd/.bat — use it directly.
+    ///   2. For a bare name, check for .ps1 on PATH — invoke via PowerShell with
+    ///      explicit UTF-8 console encoding. This is the ONLY reliable path for
+    ///      Unicode command-line arguments on Windows, because:
+    ///      - cmd.exe /c converts the command line using the OEM code page (CP437),
+    ///        corrupting all non-ASCII characters regardless of console encoding.
+    ///      - PowerShell with [Console]::OutputEncoding = UTF-8 correctly passes
+    ///        Unicode strings to child processes.
+    ///   3. For a bare name, check for .exe on PATH (direct native executable).
+    ///   4. If nothing found, return the bare name as-is (let the OS resolve it).
     /// </summary>
     private static (string FileName, string ArgPrefix) ResolveProcess(string executable)
     {
-        string? scriptPath = null;
+        var isBareName = !executable.Contains('.')
+                         && !executable.Contains(Path.DirectorySeparatorChar)
+                         && !executable.Contains(Path.AltDirectorySeparatorChar);
 
-        if (executable.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
+        // Case 1: explicit extension — use directly
+        if (!isBareName)
         {
-            scriptPath = executable;
-        }
-        else if (!executable.Contains('.') &&
-                 !executable.Contains(Path.DirectorySeparatorChar) &&
-                 !executable.Contains(Path.AltDirectorySeparatorChar))
-        {
-            // Bare name like "claude" — check if claude.ps1 exists on PATH
-            var ps1 = FindOnPath(executable + ".ps1");
-            if (ps1 != null)
-            {
-                scriptPath = ps1;
-            }
+            return (executable, "");
         }
 
-        if (scriptPath != null)
+        // Cases 2–4: bare name — probe PATH in priority order
+
+        // 2. PowerShell with UTF-8 encoding — the ONLY reliable path for Unicode.
+        //    cmd.exe /c corrupts Unicode via OEM code page conversion.
+        //    PowerShell with [Console]::OutputEncoding = UTF-8 preserves Unicode.
+        var ps1Path = FindOnPath(executable + ".ps1");
+        if (ps1Path != null)
         {
-            // Wrap: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "script.ps1" <args>
-            var prefix = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" ";
+            // Command form (not -File) so we can execute encoding setup first.
+            // [Console]::OutputEncoding = UTF-8 forces PowerShell to use UTF-8 for
+            // child process command-line encoding, preserving Unicode characters.
+            // $OutputEncoding = UTF-8 ensures PowerShell's own stream encoding is UTF-8.
+            var setupCmd = "[Console]::InputEncoding=[Console]::OutputEncoding=$OutputEncoding=[System.Text.UTF8Encoding]::new()";
+            var cmd = $"{setupCmd}; & \"{ps1Path}\" @args";
+            var prefix = $"-NoProfile -ExecutionPolicy Bypass -Command \"{cmd}\" ";
             return ("powershell.exe", prefix);
         }
 
+        // 3. Direct native executable
+        var exePath = FindOnPath(executable + ".exe");
+        if (exePath != null)
+        {
+            return (exePath, "");
+        }
+
+        // 4. Nothing found on PATH — return bare name (OS will attempt resolution)
         return (executable, "");
     }
 
     private static string? FindOnPath(string fileName) => RuntimeHelpers.FindOnPath(fileName);
+
+    /// <summary>
+    /// Logs the resolved executable details for diagnostics.
+    /// Includes the resolved FileName, the arg prefix (wrapper), and the
+    /// console/output encoding to help diagnose encoding issues.
+    /// </summary>
+    private void LogResolvedProcess(string requested, string resolved, string argPrefix, string context)
+    {
+        try
+        {
+            var consoleCodePage = Console.OutputEncoding.CodePage;
+            var outputEncodingName = Console.OutputEncoding.EncodingName;
+            var wrapper = string.IsNullOrEmpty(argPrefix) ? "none" : argPrefix.Split(' ')[0];
+            _logger.Info($"ClaudeCodeRuntime [{context}]: resolved exe={resolved}, requested={requested}, wrapper={wrapper}, consoleCodePage={consoleCodePage}, outputEncoding={outputEncodingName}, argPrefixLen={argPrefix.Length}");
+        }
+        catch
+        {
+            // Logging should never crash the process resolution
+            _logger.Info($"ClaudeCodeRuntime [{context}]: resolved exe={resolved}, requested={requested}, argPrefixLen={argPrefix.Length}");
+        }
+    }
 
     /// <summary>
     /// Builds the command-line arguments for claude -p.
