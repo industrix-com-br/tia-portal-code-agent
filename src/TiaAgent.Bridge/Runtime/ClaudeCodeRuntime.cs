@@ -104,6 +104,20 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
         IProgress<AgentTaskEvent>? progress,
         CancellationToken cancellationToken)
     {
+        // --- Request validation ---
+        var validationError = ValidateRequest(request);
+        if (validationError != null)
+        {
+            _logger.Warn($"ClaudeCodeRuntime: request validation failed: {validationError}");
+            return new AgentTaskResult
+            {
+                Success = false,
+                Error = validationError,
+                ErrorCode = "INVALID_REQUEST",
+                RuntimeId = Id
+            };
+        }
+
         var exeName = _executable ?? "claude";
         var (fileName, argPrefix) = ResolveProcess(exeName);
         LogResolvedProcess(exeName, fileName, argPrefix, "execute");
@@ -114,23 +128,42 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
             EnsureMcpConfigGenerated();
         }
 
-        var claudeArgs = BuildArguments(request);
+        var fixedArgs = BuildArguments();
         var hasMcp = !string.IsNullOrEmpty(_generatedMcpConfigPath);
         _logger.Info($"ClaudeCodeRuntime: mcpConfig={_generatedMcpConfigPath ?? "none"}, mcpTransport={(hasMcp ? "stdio" : "none")}, mcpCommand={_mcpServerCommand ?? "none"}, argPrefix={argPrefix.Length > 0}");
-        var args = $"{argPrefix}{claudeArgs}".TrimStart();
+        var args = $"{argPrefix}{fixedArgs}".TrimStart();
 
-        _logger.Info($"ClaudeCodeRuntime: executing task {request.TaskId} (action={request.Action}, agent={request.AgentId}, mcpConfig={_generatedMcpConfigPath ?? "none"})");
+        // --- Boundary diagnostics ---
+        var promptHash = ProcessRunner.ComputeSha256(request.Prompt!);
+        var promptBytes = Encoding.UTF8.GetByteCount(request.Prompt!);
+        var promptEndsWithNewline = request.Prompt!.EndsWith('\n');
+
+        _logger.Info($"ClaudeCodeRuntime: task={request.TaskId} action={request.Action} agent={request.AgentId}");
+        _logger.Info($"ClaudeCodeRuntime: selection={request.Selection?.Name ?? "none"} ({request.Selection?.ObjectType ?? "none"})");
+        _logger.Info($"ClaudeCodeRuntime: prompt length={request.Prompt!.Length} chars, {promptBytes} UTF-8 bytes, hash={promptHash}, endsWithNewline={promptEndsWithNewline}");
+        _logger.Info($"ClaudeCodeRuntime: prompt preview start={EscapeForLog(request.Prompt!, 120)}");
+        _logger.Info($"ClaudeCodeRuntime: prompt preview end={EscapeForLog(request.Prompt![^120..], 120)}");
+        _logger.Info($"ClaudeCodeRuntime: resolved executable={fileName}, wrapper={(argPrefix.Length > 0 ? "powershell.exe" : "none")}");
+        _logger.Info($"ClaudeCodeRuntime: fixed CLI args={Truncate(args, 300)}");
+        _logger.Info($"ClaudeCodeRuntime: stdin redirected=True, stdin bytes={promptBytes}");
+        _logger.Info($"ClaudeCodeRuntime: session mode=fresh (no --continue/--resume)");
+        _logger.Info($"ClaudeCodeRuntime: mcpConfig={_generatedMcpConfigPath ?? "none"}, mcpTransport={(hasMcp ? "stdio" : "none")}");
 
         var lineProgress = new Progress<string>(line =>
         {
             progress?.Report(new AgentTaskEvent { EventType = "progress", Message = line });
         });
 
+        // --- Execute via stdin transport ---
         var result = await _processRunner.RunAsync(
             fileName, args, null,
             TimeSpan.FromMinutes(5),
             progress: lineProgress,
+            stdinContent: request.Prompt!,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        // --- Post-execution diagnostics ---
+        _logger.Info($"ClaudeCodeRuntime: process exit code={result.ExitCode}, stdout length={result.StdOut.Length}, stderr length={result.StdErr.Length}");
 
         if (result.Cancelled)
         {
@@ -192,6 +225,21 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
                 Error = $"claude exited with code {result.ExitCode}. {ProcessRunner.StripAnsiEscapes(result.StdErr.Trim())}",
                 ErrorCode = "RUNTIME_NON_ZERO_EXIT",
                 RuntimeId = Id
+            };
+        }
+
+        // --- Response sanity checks ---
+        var responseError = ValidateResponse(response, request.Action);
+        if (responseError != null)
+        {
+            _logger.Warn($"ClaudeCodeRuntime: response validation failed: {responseError}");
+            return new AgentTaskResult
+            {
+                Success = false,
+                Error = responseError,
+                ErrorCode = "RUNTIME_INVALID_RESPONSE",
+                RuntimeId = Id,
+                RuntimeMode = "cli"
             };
         }
 
@@ -288,21 +336,17 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
     }
 
     /// <summary>
-    /// Builds the command-line arguments for claude -p.
+    /// Builds fixed, short command-line arguments for claude.
+    /// The dynamic prompt is NOT placed here — it goes through stdin.
     /// </summary>
-    private string BuildArguments(AgentTaskRequest request)
+    private string BuildArguments()
     {
         var sb = new StringBuilder();
 
-        // Non-interactive print mode
-        sb.Append("-p");
-
-        // Prompt — passed as a positional argument
-        if (!string.IsNullOrEmpty(request.Prompt))
-        {
-            sb.Append(' ');
-            sb.Append(EscapeShellArg(request.Prompt));
-        }
+        // Non-interactive print mode with a fixed instruction.
+        // The real prompt arrives via stdin.
+        sb.Append("-p ");
+        sb.Append(EscapeShellArg("Process the complete request provided through stdin."));
 
         // JSON output for machine-readable response
         sb.Append(" --output-format json");
@@ -311,9 +355,8 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
         if (!string.IsNullOrEmpty(_generatedMcpConfigPath))
         {
             sb.Append(" --mcp-config ");
-            sb.Append(_generatedMcpConfigPath);
+            sb.Append(EscapeShellArg(_generatedMcpConfigPath));
             sb.Append(" --strict-mcp-config");
-
         }
 
         // Model override
@@ -409,6 +452,94 @@ public sealed class ClaudeCodeRuntime : IAgentRuntime, IDisposable
     }
 
     private static string EscapeShellArg(string arg) => RuntimeHelpers.EscapeShellArg(arg);
+
+    private static string? ValidateRequest(AgentTaskRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.CorrelationId))
+            return "Missing correlation ID";
+
+        if (string.IsNullOrWhiteSpace(request.Action))
+            return "Missing action";
+
+        var recognizedActions = new[] { "explain", "review", "propose" };
+        var actionLower = request.Action.ToLowerInvariant();
+        if (Array.IndexOf(recognizedActions, actionLower) < 0)
+            return $"Unrecognized action: '{request.Action}'. Expected one of: explain, review, propose";
+
+        if (string.IsNullOrWhiteSpace(request.AgentId))
+            return "Missing agent ID";
+
+        if (string.IsNullOrWhiteSpace(request.Prompt))
+            return "Empty prompt — no content to send to Claude";
+
+        if (request.Prompt.Length < 50)
+            return $"Prompt too short ({request.Prompt.Length} chars) — expected at least 50 chars from the template";
+
+        return null;
+    }
+
+    private static string? ValidateResponse(string? response, string action)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+            return "Empty response from Claude";
+
+        var trimmed = response.Trim();
+
+        // Detect generic greeting
+        if (trimmed.StartsWith("Hi!", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("I'm Claude", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("ready to help", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Response is a generic greeting — prompt was likely not received";
+        }
+
+        // Detect empty-message warnings
+        if (trimmed.Contains("message came through empty", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("message got cut off", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Response indicates empty or truncated input — prompt was not delivered correctly";
+        }
+
+        return null;
+    }
+
+    private static string EscapeForLog(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "(empty)";
+
+        var sb = new StringBuilder(Math.Min(text.Length, maxLength));
+        foreach (var c in text)
+        {
+            if (sb.Length >= maxLength) break;
+            switch (c)
+            {
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                case '\\' when sb.Length < maxLength - 2: sb.Append("\\\\"); break;
+                case '"' when sb.Length < maxLength - 2: sb.Append("\\\""); break;
+                default:
+                    if (char.IsControl(c))
+                    {
+                        if (sb.Length < maxLength - 4)
+                            sb.Append($"\\x{(int)c:X2}");
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                    break;
+            }
+        }
+        if (text.Length > maxLength) sb.Append("...");
+        return sb.ToString();
+    }
+
+    private static string Truncate(string s, int maxLength)
+    {
+        if (s == null) return "";
+        return s.Length <= maxLength ? s : string.Concat(s.AsSpan(0, maxLength), "...");
+    }
 
     public void Dispose()
     {
