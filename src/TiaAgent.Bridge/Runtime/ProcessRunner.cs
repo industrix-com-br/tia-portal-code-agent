@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -36,6 +37,8 @@ public sealed class ProcessRunner : IDisposable
 
     /// <summary>
     /// Executes a process and captures its output.
+    /// When stdinContent is provided, writes it as UTF-8 bytes to stdin before closing,
+    /// enabling safe transport of dynamic prompts without shell interpretation.
     /// Reads raw bytes from StandardOutput.BaseStream and StandardError.BaseStream
     /// BEFORE any string decoding, then decodes explicitly with strict UTF-8.
     /// </summary>
@@ -45,6 +48,7 @@ public sealed class ProcessRunner : IDisposable
     /// <param name="timeout">Maximum execution time.</param>
     /// <param name="environmentVariables">Optional environment variables to set.</param>
     /// <param name="progress">Optional progress reporter for stdout lines.</param>
+    /// <param name="stdinContent">Optional content to write to stdin as UTF-8 before closing.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The process result with exit code, stdout, and stderr.</returns>
     public async Task<ProcessResult> RunAsync(
@@ -54,6 +58,7 @@ public sealed class ProcessRunner : IDisposable
         TimeSpan timeout,
         System.Collections.Generic.Dictionary<string, string>? environmentVariables = null,
         IProgress<string>? progress = null,
+        string? stdinContent = null,
         CancellationToken cancellationToken = default)
     {
         var stdout = new StringBuilder();
@@ -90,7 +95,18 @@ public sealed class ProcessRunner : IDisposable
             process = new Process { StartInfo = startInfo };
             process.Start();
 
-            // Close stdin immediately to signal non-interactive mode
+            // Write content to stdin if provided, then close
+            if (stdinContent != null)
+            {
+                var stdinBytes = Encoding.UTF8.GetBytes(stdinContent);
+                _logger.Info($"ProcessRunner: writing {stdinBytes.Length} UTF-8 bytes to stdin");
+
+                await process.StandardInput.BaseStream.WriteAsync(stdinBytes.AsMemory(), cancellationToken)
+                    .ConfigureAwait(false);
+                await process.StandardInput.BaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // Close stdin to signal end of input
             try { process.StandardInput.Close(); } catch { }
 
             _logger.Info($"ProcessRunner: process started (PID={process.Id})");
@@ -331,6 +347,16 @@ public sealed class ProcessRunner : IDisposable
     {
         if (string.IsNullOrEmpty(text)) return text;
         return AnsiEscapePattern.Replace(text, string.Empty);
+    }
+
+    /// <summary>
+    /// Computes the SHA-256 hash of a UTF-8 encoded string.
+    /// </summary>
+    public static string ComputeSha256(string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static string Truncate(string s, int maxLength)
