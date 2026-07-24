@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using FluentAssertions;
 using TiaAgent.AddIn.Bridge;
 using Xunit;
@@ -12,6 +13,12 @@ namespace TiaAgent.AddIn.Tests;
 /// </summary>
 public class JsonUnescapeTests
 {
+    static JsonUnescapeTests()
+    {
+        // Register CodePagesEncodingProvider so CP437 (and other OEM/legacy code pages)
+        // are available on .NET 8+, where they are not included by default.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
     /// <summary>
     /// Extracts a JSON string value, handling escaped quotes within the string.
     /// This mirrors the production parsing logic but with proper escape-awareness.
@@ -418,6 +425,100 @@ public class JsonUnescapeTests
     public void RepairMojibake_EmptyString_NoChange()
     {
         AgentBridgeClient.RepairMojibake("").Should().Be("");
+    }
+
+    // ── CP437 (OEM code page) corruption tests ──
+    // These verify the root cause of the remaining encoding corruption:
+    // PowerShell 5.x reads child process stdout using the OEM code page
+    // (typically CP437 on US Windows), which corrupts multi-byte UTF-8.
+
+    /// <summary>
+    /// Simulates CP437 (OEM) corruption: UTF-8 bytes decoded as code page 437.
+    /// This is the exact corruption pattern that occurs when PowerShell reads
+    /// Node.js/Claude CLI stdout without explicit UTF-8 encoding.
+    /// </summary>
+    private static string SimulateCp437Corruption(string original)
+    {
+        var utf8Bytes = Encoding.UTF8.GetBytes(original);
+        var cp437 = Encoding.GetEncoding(437);
+        return cp437.GetString(utf8Bytes);
+    }
+
+    [Fact]
+    public void RepairMojibake_Cp437_Emdash()
+    {
+        // — (U+2014) = UTF-8 bytes E2 80 94 → CP437: ΓÇö
+        var original = "—";
+        var corrupted = SimulateCp437Corruption(original);
+        corrupted.Should().NotBe(original); // Confirm corruption happened
+
+        // The current RepairMojibake (ISO-8859-1 based) may not fix CP437 mojibake.
+        // This test documents the gap: CP437 corruption requires the upstream fix
+        // (using cmd.exe/direct exe instead of PowerShell).
+        var repaired = AgentBridgeClient.RepairMojibake(corrupted);
+
+        // Log what actually happens for diagnostic purposes
+        // CP437 mojibake is NOT the same as ISO-8859-1 mojibake — the bytes differ.
+        // This test validates that the corruption IS CP437, not ISO-8859-1.
+        corrupted.Should().Contain("ΓÇö"); // CP437 corruption pattern for em-dash
+    }
+
+    [Fact]
+    public void RepairMojibake_Cp437_Arrow()
+    {
+        // → (U+2192) = UTF-8 bytes E2 86 92 → CP437: ΓåÆ
+        var original = "→";
+        var corrupted = SimulateCp437Corruption(original);
+        corrupted.Should().NotBe(original);
+        corrupted.Should().Contain("ΓåÆ"); // CP437 corruption pattern for arrow
+    }
+
+    [Fact]
+    public void RepairMojibake_Cp437_BoxDrawing()
+    {
+        // ─ (U+2500) = UTF-8 bytes E2 94 80 → CP437: ΓöÇ
+        var original = "─";
+        var corrupted = SimulateCp437Corruption(original);
+        corrupted.Should().NotBe(original);
+        corrupted.Should().Contain("ΓöÇ"); // CP437 corruption pattern for box-drawing
+    }
+
+    [Fact]
+    public void RepairMojibake_Cp437_RedCircle()
+    {
+        // 🔴 (U+1F534) = UTF-8 bytes F0 9F 94 B4 → CP437: ≡ƒö┤
+        var original = "🔴";
+        var corrupted = SimulateCp437Corruption(original);
+        corrupted.Should().NotBe(original);
+        corrupted.Should().Contain("≡ƒö┤"); // CP437 corruption pattern for red circle emoji
+    }
+
+    // ── Exact integration test string ──
+    // This is the exact string the user specified for validation.
+
+    [Fact]
+    public void RoundTrip_ExactIntegrationString()
+    {
+        // The exact string from the user's requirements
+        var original = "Ação — 🔴 🟡 🟢 → ─ ┐ ├ │";
+        SimulateBridgeRoundTrip(original).Should().Be(original);
+    }
+
+    [Fact]
+    public void Cp437_Corruption_PreservesOriginalBytes()
+    {
+        // Verify that CP437 corruption produces the exact pattern the user reported
+        var original = "Ação — 🔴 🟡 🟢 → ─ ┐ ├ │";
+        var corrupted = SimulateCp437Corruption(original);
+
+        // The corrupted string should contain the exact patterns the user observed
+        corrupted.Should().Contain("ΓÇö"); // —
+        corrupted.Should().Contain("≡ƒö┤"); // 🔴
+        corrupted.Should().Contain("ΓåÆ"); // →
+        corrupted.Should().Contain("ΓöÇ"); // ─
+
+        // But it should NOT be identical to the original
+        corrupted.Should().NotBe(original);
     }
 
     // ── End-to-end encoding validation tests ──

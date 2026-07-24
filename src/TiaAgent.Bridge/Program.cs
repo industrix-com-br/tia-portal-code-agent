@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
 using TiaAgent.Bridge.Api;
@@ -24,6 +26,24 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
+        // Register legacy code pages (CP437, ISO-8859-1, Windows-1252) for diagnostic logging
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        // ═══════════════════════════════════════════════════════════════════
+        // CRITICAL: Set console encoding to UTF-8 before any process spawning.
+        //
+        // Without this, Windows uses the OEM code page (CP437 on US systems)
+        // to convert Unicode command-line strings to bytes when starting
+        // child processes. This corrupts multi-byte UTF-8 characters:
+        //   → (U+2192, 3 UTF-8 bytes) becomes ΓåÆ (3 CP437 chars)
+        //   📋 (U+1F4CB, 4 UTF-8 bytes) becomes ≡ƒôï (4 CP47 chars)
+        //
+        // Setting OutputEncoding to UTF-8 tells Windows to use UTF-8 for
+        // the child process console, preserving the original Unicode bytes.
+        // ═══════════════════════════════════════════════════════════════════
+        Console.OutputEncoding = Encoding.UTF8;
+        Console.InputEncoding = Encoding.UTF8;
+
         var logger = new BridgeLogger();
         var config = BridgeConfig.Load();
         var tokenProvider = new TokenProvider();

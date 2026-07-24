@@ -14,7 +14,15 @@ internal static class RuntimeHelpers
     /// </summary>
     internal static string EscapeShellArg(string arg)
     {
-        return "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        // Order matters: escape backslashes FIRST (before introducing new ones),
+        // then quotes, then control characters that CommandLineToArgvW treats as
+        // argument separators even inside double-quoted strings on Windows.
+        return "\""
+             + arg.Replace("\\", "\\\\")
+                  .Replace("\"", "\\\"")
+                  .Replace("\r", "\\r")
+                  .Replace("\n", "\\n")
+             + "\"";
     }
 
     /// <summary>

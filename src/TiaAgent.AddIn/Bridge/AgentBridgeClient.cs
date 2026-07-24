@@ -50,6 +50,21 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     {
         var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
 
+        // ═══════════════════════════════════════════════════════════════════
+        // BOUNDARY 5: HTTP raw response bytes — log hex sample
+        // ═══════════════════════════════════════════════════════════════════
+        if (bytes.Length > 0)
+        {
+            var hexLen = Math.Min(bytes.Length, 128);
+            var hex = new System.Text.StringBuilder(hexLen * 3);
+            for (int i = 0; i < hexLen; i++)
+            {
+                hex.Append($"{bytes[i]:X2} ");
+                if ((i + 1) % 32 == 0 && i + 1 < hexLen) hex.Append("\n    ");
+            }
+            AddInLogger.Info($"AgentBridgeClient [BOUNDARY 5 - HTTP raw bytes]: {bytes.Length} total, first {hexLen}: {hex}");
+        }
+
         // Check if server declared a charset; if so, use it.
         var charset = response.Content.Headers.ContentType?.CharSet;
         if (!string.IsNullOrEmpty(charset))
@@ -114,7 +129,27 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     public async Task<BridgeTaskAccepted> StartTaskAsync(BridgeTaskRequest request, CancellationToken cancellationToken)
     {
         var json = BuildTaskRequestJson(request);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        // ═══════════════════════════════════════════════════════════════════
+        // CRITICAL FIX: Use ByteArrayContent with explicit UTF-8 bytes.
+        //
+        // StringContent(json, Encoding.UTF8, "application/json") on .NET
+        // Framework 4.8 does NOT reliably encode multi-byte UTF-8 characters.
+        // It appears to use the system's default code page (CP437 on US
+        // Windows) for the HTTP request body, corrupting:
+        //   - Emojis (4 UTF-8 bytes → ASCII ??)
+        //   - Em-dash — (3 UTF-8 bytes → CP437 single byte 0x97)
+        //   - Box-drawing characters (3 UTF-8 bytes → CP437 single bytes)
+        //
+        // ByteArrayContent with manually-encoded UTF-8 bytes bypasses
+        // StringContent's encoding entirely, guaranteeing correct UTF-8.
+        // ═══════════════════════════════════════════════════════════════════
+        var jsonBytes = Encoding.UTF8.GetBytes(json);
+        var content = new ByteArrayContent(jsonBytes, 0, jsonBytes.Length);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")
+        {
+            CharSet = "utf-8"
+        };
 
         var response = await _httpClient.PostAsync("/v1/tasks", content, cancellationToken).ConfigureAwait(false);
         var responseJson = await ReadResponseUtf8Async(response).ConfigureAwait(false);
@@ -484,6 +519,24 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             };
         }
 
+        var rawResponse = ExtractJsonString(json, "response") ?? "";
+
+        // ═══════════════════════════════════════════════════════════════════
+        // BOUNDARY 6: After JSON deserialization — log code points
+        // ═══════════════════════════════════════════════════════════════════
+        if (!string.IsNullOrEmpty(rawResponse))
+        {
+            var sampleLen = Math.Min(rawResponse.Length, 128);
+            var codePointSample = new System.Text.StringBuilder(sampleLen * 7);
+            for (int i = 0; i < sampleLen; i++)
+            {
+                var c = rawResponse[i];
+                if (c >= 0x20 && c < 0x7F) codePointSample.Append(c);
+                else codePointSample.Append($"U+{(int)c:X4} ");
+            }
+            AddInLogger.Info($"AgentBridgeClient [BOUNDARY 6 - parsed response]: {rawResponse.Length} chars, code points: {codePointSample}");
+        }
+
         return new BridgeTaskStatus
         {
             TaskId = ExtractJsonString(json, "taskId") ?? "",
@@ -492,7 +545,7 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             Message = ExtractJsonString(json, "message") ?? "",
             RuntimeId = ExtractJsonString(json, "runtimeId"),
             RuntimeVersion = ExtractJsonString(json, "runtimeVersion"),
-            Response = RepairMojibake(ExtractJsonString(json, "response") ?? ""),
+            Response = rawResponse,
             Error = error
         };
     }
