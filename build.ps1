@@ -155,8 +155,7 @@ function Invoke-Test {
         Invoke-Dotnet @("restore", $Solution, "--force-evaluate", "--verbosity", "minimal")
     }
 
-    $filter = "FullyQualifiedName!~ProcessRunner_RunAsync_PowerShell_CorruptsUtf8&FullyQualifiedName!~ProcessRunner_RunAsync_CmdExe_PreservesUtf8"
-    Invoke-Dotnet @("test", $Solution, "--configuration", $Configuration, "--no-restore", "--verbosity", "normal", "--filter", $filter)
+    Invoke-Dotnet @("test", $Solution, "--configuration", $Configuration, "--no-restore", "--verbosity", "normal")
     Write-Ok "Tests passed"
 }
 
