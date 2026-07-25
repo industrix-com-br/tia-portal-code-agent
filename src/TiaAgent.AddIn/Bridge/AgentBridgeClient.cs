@@ -55,8 +55,8 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 
         var charset = response.Content.Headers.ContentType?.CharSet;
         if (!string.IsNullOrWhiteSpace(charset) &&
-            !charset.Equals("utf-8", StringComparison.OrdinalIgnoreCase) &&
-            !charset.Equals("utf8", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(charset, "utf-8", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(charset, "utf8", StringComparison.OrdinalIgnoreCase))
         {
             throw new BridgeTaskException(
                 $"Bridge response declared unsupported charset '{charset}'. Expected UTF-8.");
