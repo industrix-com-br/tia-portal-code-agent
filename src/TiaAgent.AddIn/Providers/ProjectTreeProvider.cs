@@ -10,6 +10,7 @@ using TiaAgent.AddIn.Bridge;
 using TiaAgent.AddIn.Diagnostics;
 using TiaAgent.AddIn.Ui;
 using TiaAgent.Contracts.Bridge;
+using TiaAgent.Contracts.Diagnostics;
 
 namespace TiaAgent.AddIn.Providers;
 
@@ -224,10 +225,8 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
                 if (status.Status == BridgeTaskStatusValues.Completed)
                 {
                     var response = status.Response ?? "No response received.";
-                    if (!string.IsNullOrEmpty(status.RuntimeId))
-                    {
-                        response = $"[Runtime: {status.RuntimeId}]\n\n{response}";
-                    }
+                    AddInLogger.Info(TextPayloadDiagnostics.DescribeText(
+                        "8-9.addin.response-and-renderer-input", response));
                     AddInLogger.Info($"Task completed. Response length: {response.Length} chars");
                     AssistantPanelFactory.ShowResult(action, response,
                         correlationId: correlationId,
