@@ -22,20 +22,66 @@ jobs:
     name: CI
     if: github.ref_type != 'tag'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Validate repository inputs
+        shell: pwsh
+        run: |
+          $required = @(
+            "TiaAgent.sln",
+            "global.json",
+            "Directory.Build.props",
+            "Directory.Packages.props",
+            "build.ps1",
+            "src/TiaAgent.AddIn/TiaAgent.AddIn.csproj",
+            "src/TiaAgent.Bridge/TiaAgent.Bridge.csproj",
+            "src/TiaAgent.Cli/TiaAgent.Cli.csproj"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Required CI input not found: $path"
+            }
+          }
+
+      - name: Clean
+        shell: pwsh
+        run: ./build.ps1 clean
 
       - name: Restore
-        run: dotnet restore TiaAgent.sln
+        run: dotnet restore TiaAgent.sln --locked-mode
 
-      - name: Test
-        run: dotnet test TiaAgent.sln --configuration Release --no-restore
+      - name: Build
+        run: dotnet build TiaAgent.sln --configuration Release --no-restore
+
+      - name: Test Contracts
+        run: dotnet test tests/TiaAgent.Contracts.Tests/TiaAgent.Contracts.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test Application
+        run: dotnet test tests/TiaAgent.Application.Tests/TiaAgent.Application.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test Architecture
+        run: dotnet test tests/TiaAgent.ArchitectureTests/TiaAgent.ArchitectureTests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test Bridge
+        run: dotnet test tests/TiaAgent.Bridge.Tests/TiaAgent.Bridge.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test Runtime
+        run: dotnet test tests/TiaAgent.Runtime.Tests/TiaAgent.Runtime.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test CLI
+        run: dotnet test tests/TiaAgent.Cli.Tests/TiaAgent.Cli.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Test Add-In
+        run: dotnet test tests/TiaAgent.AddIn.Tests/TiaAgent.AddIn.Tests.csproj --configuration Release --no-build --no-restore
 
   publish:
     name: Publish NuGet
@@ -48,12 +94,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         env:
           DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
         with:
