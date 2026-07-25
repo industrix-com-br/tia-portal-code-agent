@@ -31,7 +31,6 @@ See:
 
 - [`docs/VERSIONING.md`](docs/VERSIONING.md)
 - [`docs/RELEASING.md`](docs/RELEASING.md)
-- [`docs/SIGNING.md`](docs/SIGNING.md)
 
 ## Security
 
