@@ -1,6 +1,6 @@
 # Documentation
 
-This directory contains maintained user guides, contributor references, maintainer procedures, architectural decisions, and technical specifications for TIA Portal Code Agent.
+This directory contains maintained user guides, contributor references, maintainer procedures, and technical specifications for TIA Portal Code Agent.
 
 ## Start here
 
@@ -38,12 +38,9 @@ The files under [`spec/`](spec/) describe product behavior, architecture, securi
 - [Known unknowns and validation queue](spec/KNOWN_UNKNOWNS.md)
 - [TIA Portal Openness V21 reference](spec/tia-openness-v21/README.md)
 
-Architectural decisions are recorded under [`adr/`](adr/).
-
 ## Directory conventions
 
 - `docs/*.md` contains maintained guides useful to users or contributors.
-- `docs/adr/` contains durable architectural decisions.
 - `docs/maintainers/` contains repository administration procedures.
 - `docs/spec/` contains technical specifications and reference material.
 
