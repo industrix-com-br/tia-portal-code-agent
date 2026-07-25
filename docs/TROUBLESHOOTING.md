@@ -18,6 +18,28 @@ tia-agent version --verbose
 
 Use `tia-agent version --verbose` to list installed payload versions. There is no separate `tia-agent versions` command.
 
+## NuGet reports that `TiaAgent.Cli` was not found
+
+The project currently publishes only prerelease versions. The unqualified command searches only for stable packages:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli
+```
+
+Until a stable release exists, install the latest prerelease instead:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli --prerelease
+```
+
+A specific prerelease version can also be selected directly:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.5
+```
+
+The same rule applies to `dotnet tool update`: use `--prerelease` for the latest prerelease or `--version <version>` for an explicit package version.
+
 ## Log locations
 
 | Component | Path |
@@ -44,11 +66,11 @@ tia-agent doctor --verbose
 tia-agent install --force
 ```
 
-When the bundled payload itself is incorrect, reinstall the CLI package:
+When the bundled payload itself is incorrect, reinstall the current prerelease CLI package:
 
 ```powershell
 dotnet tool uninstall --global TiaAgent.Cli
-dotnet tool install --global TiaAgent.Cli
+dotnet tool install --global TiaAgent.Cli --prerelease
 tia-agent install
 ```
 
