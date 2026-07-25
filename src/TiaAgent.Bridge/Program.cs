@@ -1,5 +1,9 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Threading;
@@ -49,6 +53,7 @@ public static class Program
         var tokenProvider = new TokenProvider();
 
         logger.Startup("=== TIA Agent Bridge starting ===");
+        LogLoadedBinaryIdentity(logger);
         logger.Startup($"Port: {config.Port}");
         logger.Startup($"Auth token fingerprint: {TokenFingerprint(tokenProvider.Token)}");
 
@@ -124,6 +129,49 @@ public static class Program
             runtimeRegistry.Dispose();
             logger.Info("Bridge stopped");
         }
+    }
+
+    private static void LogLoadedBinaryIdentity(BridgeLogger logger)
+    {
+        try
+        {
+            var assembly = typeof(Program).Assembly;
+            var informationalVersion = assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion ?? "unknown";
+            var location = assembly.Location;
+            var process = Process.GetCurrentProcess();
+
+            logger.Startup($"Bridge assembly version: {assembly.GetName().Version}");
+            logger.Startup($"Bridge informational version: {informationalVersion}");
+            logger.Startup($"Bridge assembly location: {location}");
+            logger.Startup($"Bridge process: {process.ProcessName} (PID {process.Id})");
+            logger.Startup($"Bridge process start time: {process.StartTime:O}");
+            logger.Startup($"Bridge process path: {process.MainModule?.FileName ?? "(unknown)"}");
+
+            if (!string.IsNullOrEmpty(location) && File.Exists(location))
+            {
+                var fileInfo = new FileInfo(location);
+                logger.Startup($"Bridge file timestamp UTC: {fileInfo.LastWriteTimeUtc:O}");
+                logger.Startup($"Bridge file size: {fileInfo.Length} bytes");
+                logger.Startup($"Bridge file SHA-256: {ComputeFileSha256(location)}");
+            }
+            else
+            {
+                logger.Warn("Bridge assembly location is unavailable or does not exist on disk.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warn($"Could not log Bridge binary identity: {ex.Message}");
+        }
+    }
+
+    private static string ComputeFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var sha256 = SHA256.Create();
+        return Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
     }
 
     /// <summary>

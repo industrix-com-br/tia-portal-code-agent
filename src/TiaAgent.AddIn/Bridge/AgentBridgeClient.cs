@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TiaAgent.AddIn.Diagnostics;
 using TiaAgent.Contracts.Bridge;
+using TiaAgent.Contracts.Diagnostics;
 
 namespace TiaAgent.AddIn.Bridge;
 
@@ -16,6 +17,8 @@ namespace TiaAgent.AddIn.Bridge;
 /// </summary>
 public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 {
+    private static readonly Encoding s_strictUtf8 = new UTF8Encoding(false, true);
+
     private readonly HttpClient _httpClient;
     private readonly AddInConfig _config;
     private readonly bool _ownsHttpClient;
@@ -41,52 +44,37 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     }
 
     /// <summary>
-    /// Reads HTTP response content as a string using explicit UTF-8 encoding.
-    /// This prevents encoding corruption when the server response lacks a
-    /// charset in the Content-Type header (which causes HttpClient to fall
-    /// back to Latin-1, producing garbled characters like rÃ©sultat).
+    /// Reads HTTP response content as raw bytes and decodes it with strict UTF-8.
+    /// Invalid byte sequences fail explicitly instead of introducing U+FFFD.
     /// </summary>
     private static async Task<string> ReadResponseUtf8Async(HttpResponseMessage response)
     {
         var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+        AddInLogger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes(
+            "6.addin.http-response.raw", bytes));
 
-        // ═══════════════════════════════════════════════════════════════════
-        // BOUNDARY 5: HTTP raw response bytes — log hex sample
-        // ═══════════════════════════════════════════════════════════════════
-        if (bytes.Length > 0)
-        {
-            var hexLen = Math.Min(bytes.Length, 128);
-            var hex = new System.Text.StringBuilder(hexLen * 3);
-            for (int i = 0; i < hexLen; i++)
-            {
-                hex.Append($"{bytes[i]:X2} ");
-                if ((i + 1) % 32 == 0 && i + 1 < hexLen) hex.Append("\n    ");
-            }
-            AddInLogger.Info($"AgentBridgeClient [BOUNDARY 5 - HTTP raw bytes]: {bytes.Length} total, first {hexLen}: {hex}");
-        }
-
-        // Check if server declared a charset; if so, use it.
         var charset = response.Content.Headers.ContentType?.CharSet;
-        if (!string.IsNullOrEmpty(charset))
+        if (!string.IsNullOrWhiteSpace(charset) &&
+            !charset.Equals("utf-8", StringComparison.OrdinalIgnoreCase) &&
+            !charset.Equals("utf8", StringComparison.OrdinalIgnoreCase))
         {
-            try
-            {
-                // Normalize charset name (e.g. "utf-8" → "utf-8")
-                var encoding = Encoding.GetEncoding(charset);
-                var result = encoding.GetString(bytes);
-                AddInLogger.Debug($"ReadResponseUtf8Async: charset='{charset}', {bytes.Length} bytes → {result.Length} chars");
-                return result;
-            }
-            catch
-            {
-                // Unknown charset — fall through to UTF-8
-            }
+            throw new BridgeTaskException(
+                $"Bridge response declared unsupported charset '{charset}'. Expected UTF-8.");
         }
 
-        // Default: UTF-8 (the universal encoding for JSON APIs)
-        var utf8Result = Encoding.UTF8.GetString(bytes);
-        AddInLogger.Debug($"ReadResponseUtf8Async: charset=null (defaulting to UTF-8), {bytes.Length} bytes → {utf8Result.Length} chars");
-        return utf8Result;
+        string decoded;
+        try
+        {
+            decoded = s_strictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            throw new BridgeTaskException("Bridge response contained invalid UTF-8 bytes.", ex);
+        }
+
+        AddInLogger.Info(TextPayloadDiagnostics.DescribeText(
+            "7.addin.http-response.decoded-json", decoded));
+        return decoded;
     }
 
     private void ConfigureAuthentication(HttpClient client, AddInConfig config)
@@ -130,23 +118,10 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     {
         var json = BuildTaskRequestJson(request);
 
-        // ═══════════════════════════════════════════════════════════════════
-        // CRITICAL FIX: Use ByteArrayContent with explicit UTF-8 bytes.
-        //
-        // StringContent(json, Encoding.UTF8, "application/json") on .NET
-        // Framework 4.8 does NOT reliably encode multi-byte UTF-8 characters.
-        // It appears to use the system's default code page (CP437 on US
-        // Windows) for the HTTP request body, corrupting:
-        //   - Emojis (4 UTF-8 bytes → ASCII ??)
-        //   - Em-dash — (3 UTF-8 bytes → CP437 single byte 0x97)
-        //   - Box-drawing characters (3 UTF-8 bytes → CP437 single bytes)
-        //
-        // ByteArrayContent with manually-encoded UTF-8 bytes bypasses
-        // StringContent's encoding entirely, guaranteeing correct UTF-8.
-        // ═══════════════════════════════════════════════════════════════════
+        // Use manually encoded UTF-8 bytes to make the request body unambiguous.
         var jsonBytes = Encoding.UTF8.GetBytes(json);
         var content = new ByteArrayContent(jsonBytes, 0, jsonBytes.Length);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json")
         {
             CharSet = "utf-8"
         };
@@ -218,7 +193,6 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             sb.AppendFormat(",\"tiaPath\":\"{0}\"", EscapeJson(request.Selection.TiaPath));
             sb.AppendFormat(",\"language\":\"{0}\"", EscapeJson(request.Selection.Language));
 
-            // Include source code if present
             if (!string.IsNullOrEmpty(request.Selection.Source))
             {
                 sb.AppendFormat(",\"source\":\"{0}\"", EscapeJson(request.Selection.Source));
@@ -238,6 +212,8 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         return value
             .Replace("\\", "\\\\")
             .Replace("\"", "\\\"")
+            .Replace("\b", "\\b")
+            .Replace("\f", "\\f")
             .Replace("\n", "\\n")
             .Replace("\r", "\\r")
             .Replace("\t", "\\t");
@@ -260,13 +236,12 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         if (json[idx] == '"')
         {
             var start = idx + 1;
-            // Find the closing quote, respecting escaped quotes (\")
             var i = start;
             while (i < json.Length)
             {
                 if (json[i] == '\\')
                 {
-                    i += 2; // skip escaped character
+                    i += 2;
                     continue;
                 }
                 if (json[i] == '"')
@@ -283,78 +258,54 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     }
 
     /// <summary>
-    /// Unescapes a JSON string value. Reverses the escaping applied by
-    /// BridgeController.EscapeJson() during serialization.
-    /// Uses character-by-character processing to avoid double-processing
-    /// issues with sequential Replace calls (e.g. "\\n" → wrong result).
-    /// Handles \uXXXX unicode escape sequences for accented characters.
+    /// Unescapes one JSON string value without normalizing its contents.
     /// </summary>
-    private static string UnescapeJsonString(string raw)
+    internal static string UnescapeJsonString(string raw)
     {
         if (string.IsNullOrEmpty(raw))
             return raw;
 
-        var sb = new System.Text.StringBuilder(raw.Length);
+        var sb = new StringBuilder(raw.Length);
         for (int i = 0; i < raw.Length; i++)
         {
             if (raw[i] == '\\' && i + 1 < raw.Length)
             {
                 switch (raw[i + 1])
                 {
-                    case 'n':
-                        sb.Append('\n');
-                        i++;
-                        break;
-                    case 'r':
-                        sb.Append('\r');
-                        i++;
-                        break;
-                    case 't':
-                        sb.Append('\t');
-                        i++;
-                        break;
-                    case '"':
-                        sb.Append('"');
-                        i++;
-                        break;
-                    case '\\':
-                        sb.Append('\\');
-                        i++;
-                        break;
+                    case 'n': sb.Append('\n'); i++; break;
+                    case 'r': sb.Append('\r'); i++; break;
+                    case 't': sb.Append('\t'); i++; break;
+                    case 'b': sb.Append('\b'); i++; break;
+                    case 'f': sb.Append('\f'); i++; break;
+                    case '"': sb.Append('"'); i++; break;
+                    case '\\': sb.Append('\\'); i++; break;
+                    case '/': sb.Append('/'); i++; break;
                     case 'u':
-                        // \uXXXX — parse 4 hex digits as a Unicode code point.
-                        // Handles supplementary plane (surrogate pairs) for full Unicode support.
                         if (i + 5 < raw.Length)
                         {
                             var hex = raw.Substring(i + 2, 4);
                             if (int.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
                                     System.Globalization.CultureInfo.InvariantCulture, out var codePoint))
                             {
-                                // Check for surrogate pair: high surrogate (0xD800-0xDBFF)
                                 if (codePoint >= 0xD800 && codePoint <= 0xDBFF &&
                                     i + 11 < raw.Length && raw[i + 6] == '\\' && raw[i + 7] == 'u')
                                 {
                                     var lowHex = raw.Substring(i + 8, 4);
                                     if (int.TryParse(lowHex, System.Globalization.NumberStyles.HexNumber,
-                                            System.Globalization.CultureInfo.InvariantCulture, out var lowCode))
+                                            System.Globalization.CultureInfo.InvariantCulture, out var lowCode) &&
+                                        lowCode >= 0xDC00 && lowCode <= 0xDFFF)
                                     {
-                                        if (lowCode >= 0xDC00 && lowCode <= 0xDFFF)
-                                        {
-                                            // Valid surrogate pair — combine into a single character
-                                            var fullCode = 0x10000 + (codePoint - 0xD800) * 0x400 + (lowCode - 0xDC00);
-                                            sb.Append(char.ConvertFromUtf32(fullCode));
-                                            i += 11; // skip \uXXXX\uXXXX
-                                            break;
-                                        }
+                                        var fullCode = 0x10000 + (codePoint - 0xD800) * 0x400 + (lowCode - 0xDC00);
+                                        sb.Append(char.ConvertFromUtf32(fullCode));
+                                        i += 11;
+                                        break;
                                     }
                                 }
-                                // Basic BMP character
                                 sb.Append((char)codePoint);
-                                i += 5; // skip \uXXXX
+                                i += 5;
                             }
                             else
                             {
-                                // Invalid hex — keep literal
                                 sb.Append(raw[i]);
                             }
                         }
@@ -377,26 +328,15 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     }
 
     /// <summary>
-    /// Detects and repairs UTF-8 mojibake: text where UTF-8 bytes were incorrectly
-    /// decoded as Windows-1252 (Latin-1), producing garbled characters like ΓöÇ instead of ─.
-    ///
-    /// Pattern: UTF-8 encodes U+2500..U+257F (box-drawing) as 3 bytes (E2 94/95 80..BF).
-    /// When those bytes are read as Windows-1252, they become: â (0xE2) + two chars in
-    /// 0x80..0xBF range. This method detects that pattern and re-encodes correctly.
-    ///
-    /// Used as defense-in-depth on the Add-In side. The primary fix is in ProcessRunner
-    /// (StandardOutputEncoding = UTF8), but this catches residual corruption from
-    /// any other encoding mis-handling in the pipeline.
+    /// Legacy defense-in-depth helper retained for compatibility with existing tests.
+    /// It is not called by the production response path and must not be used to hide
+    /// an upstream encoding failure.
     /// </summary>
     internal static string RepairMojibake(string text)
     {
         if (string.IsNullOrEmpty(text) || text.Length < 3)
             return text;
 
-        // Quick check: if no chars in the 0xC0-0xFF range, no mojibake is possible.
-        // UTF-8 3-byte sequences always contain bytes in 0x80-0xBF (continuation bytes),
-        // and the lead byte is always ≥ 0xC0. When read as Windows-1252, the lead byte
-        // maps to a char ≥ 0xC0, so this check catches all 3-byte mojibake.
         bool hasHighChars = false;
         for (int i = 0; i < text.Length; i++)
         {
@@ -409,34 +349,18 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         if (!hasHighChars)
             return text;
 
-        // Try to detect and repair: encode as ISO-8859-1 bytes, then decode as UTF-8.
-        // If the result contains valid Unicode (no U+FFFD replacement chars) and differs
-        // from the original, it was mojibake.
-        // ISO-8859-1 (code page 28591) is a direct byte→char mapping for 0x00-0xFF,
-        // identical to Windows-1252 for this range, and available on all .NET platforms.
         try
         {
             var latin1 = Encoding.GetEncoding(28591);
-
             var bytes = latin1.GetBytes(text);
             var repaired = Encoding.UTF8.GetString(bytes);
 
-            // Validate: the repaired text should not contain replacement chars (U+FFFD)
-            // and should differ from the original (meaning mojibake was detected and fixed)
             if (repaired != text && !repaired.Contains('�'))
-            {
-                AddInLogger.Info($"RepairMojibake: repaired mojibake ({text.Length}→{repaired.Length} chars). " +
-                                 $"Preview: [{(repaired.Length > 100 ? repaired.Substring(0, 100) : repaired)}]");
                 return repaired;
-            }
-            else if (repaired.Contains('�'))
-            {
-                AddInLogger.Debug($"RepairMojibake: detected high chars but UTF-8 decode produced replacement chars — not mojibake.");
-            }
         }
-        catch (Exception ex)
+        catch
         {
-            AddInLogger.Warn($"RepairMojibake: failed: {ex.GetType().Name}: {ex.Message}");
+            // Compatibility helper only; production does not depend on it.
         }
 
         return text;
@@ -492,12 +416,10 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             Status = ExtractJsonString(json, "status") ?? "unknown",
             BridgeVersion = ExtractJsonString(json, "bridgeVersion") ?? "unknown",
             McpConfigured = ExtractJsonBool(json, "mcpConfigured"),
-            // New runtime fields (backward compatible)
             RuntimeId = ExtractJsonString(json, "runtimeId"),
             RuntimeDisplayName = ExtractJsonString(json, "runtimeDisplayName"),
             RuntimeAvailable = ExtractJsonBool(json, "runtimeAvailable"),
             RuntimeVersion = ExtractJsonString(json, "runtimeVersion"),
-            // Legacy fields (map to runtime fields for backward compat)
             OpenCodeAvailable = ExtractJsonBool(json, "openCodeAvailable") || ExtractJsonBool(json, "runtimeAvailable"),
             OpenCodeVersion = ExtractJsonString(json, "openCodeVersion") ?? ExtractJsonString(json, "runtimeVersion") ?? ""
         };
@@ -528,22 +450,8 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         }
 
         var rawResponse = ExtractJsonString(json, "response") ?? "";
-
-        // ═══════════════════════════════════════════════════════════════════
-        // BOUNDARY 6: After JSON deserialization — log code points
-        // ═══════════════════════════════════════════════════════════════════
-        if (!string.IsNullOrEmpty(rawResponse))
-        {
-            var sampleLen = Math.Min(rawResponse.Length, 128);
-            var codePointSample = new System.Text.StringBuilder(sampleLen * 7);
-            for (int i = 0; i < sampleLen; i++)
-            {
-                var c = rawResponse[i];
-                if (c >= 0x20 && c < 0x7F) codePointSample.Append(c);
-                else codePointSample.Append($"U+{(int)c:X4} ");
-            }
-            AddInLogger.Info($"AgentBridgeClient [BOUNDARY 6 - parsed response]: {rawResponse.Length} chars, code points: {codePointSample}");
-        }
+        AddInLogger.Info(TextPayloadDiagnostics.DescribeText(
+            "8.addin.response-field.extracted", rawResponse));
 
         return new BridgeTaskStatus
         {

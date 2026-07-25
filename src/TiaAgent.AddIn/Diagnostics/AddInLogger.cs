@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading;
 
 namespace TiaAgent.AddIn.Diagnostics;
@@ -100,11 +102,22 @@ public static class AddInLogger
         Info($"Thread apartment state: {Thread.CurrentThread.GetApartmentState()}");
         Info($"Thread ID: {Environment.CurrentManagedThreadId}");
 
+        LogLoadedBinaryIdentity();
+
         // Log process info (requires EnvironmentPermission in some sandbox configurations)
         try
         {
             var process = Process.GetCurrentProcess();
             Info($"Process: {process.ProcessName} (PID {process.Id})");
+            Info($"Process start time: {process.StartTime:O}");
+            try
+            {
+                Info($"Process path: {process.MainModule?.FileName ?? "(unknown)"}");
+            }
+            catch (Exception pathEx)
+            {
+                Warn($"Could not read process path: {pathEx.Message}");
+            }
         }
         catch (Exception ex)
         {
@@ -143,6 +156,46 @@ public static class AddInLogger
         LogThirdPartyAssemblyDiagnostics();
 
         Info("=== Startup diagnostics complete ===");
+    }
+
+    private static void LogLoadedBinaryIdentity()
+    {
+        try
+        {
+            var assembly = typeof(AddInLogger).Assembly;
+            var informationalVersion = assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion ?? "unknown";
+            var location = assembly.Location;
+
+            Info($"Add-In assembly version: {assembly.GetName().Version}");
+            Info($"Add-In informational version: {informationalVersion}");
+            Info($"Add-In assembly location: {location}");
+
+            if (!string.IsNullOrEmpty(location) && File.Exists(location))
+            {
+                var fileInfo = new FileInfo(location);
+                Info($"Add-In file timestamp UTC: {fileInfo.LastWriteTimeUtc:O}");
+                Info($"Add-In file size: {fileInfo.Length} bytes");
+                Info($"Add-In file SHA-256: {ComputeFileSha256(location)}");
+            }
+            else
+            {
+                Warn("Add-In assembly location is unavailable or does not exist on disk.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Warn($"Could not log Add-In binary identity: {ex.Message}");
+        }
+    }
+
+    private static string ComputeFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(stream);
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 
     /// <summary>

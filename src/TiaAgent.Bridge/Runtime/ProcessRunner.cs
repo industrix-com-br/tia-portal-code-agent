@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TiaAgent.Bridge.Diagnostics;
+using TiaAgent.Contracts.Diagnostics;
 
 namespace TiaAgent.Bridge.Runtime;
 
@@ -93,7 +94,6 @@ public sealed class ProcessRunner : IDisposable
             process = new Process { StartInfo = startInfo };
             process.Start();
 
-            // Write content to stdin if provided, then close
             if (stdinContent != null)
             {
                 var stdinBytes = Encoding.UTF8.GetBytes(stdinContent);
@@ -104,25 +104,20 @@ public sealed class ProcessRunner : IDisposable
                 await process.StandardInput.BaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            // Close stdin to signal end of input
             try { process.StandardInput.Close(); } catch { }
 
             _logger.Info($"ProcessRunner: process started (PID={process.Id})");
 
-            // Use a linked CTS for timeout + external cancellation
             using var timeoutCts = new CancellationTokenSource(timeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, timeoutCts.Token);
 
-            // ═══════════════════════════════════════════════════════════════════
-            // BOUNDARY 1: Raw bytes from process stdout/stderr BEFORE decoding
-            // Read stdout and stderr CONCURRENTLY to avoid deadlocks when either
-            // stream fills the OS buffer. Both reads start before awaiting exit.
-            // ═══════════════════════════════════════════════════════════════════
+            // BOUNDARY 1: read stdout and stderr concurrently as raw bytes.
             var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, linkedCts.Token);
             var stderrTask = ReadAllBytesAsync(process.StandardError.BaseStream, linkedCts.Token);
 
-            byte[] stdoutBytes, stderrBytes;
+            byte[] stdoutBytes;
+            byte[] stderrBytes;
             try
             {
                 stdoutBytes = await stdoutTask.ConfigureAwait(false);
@@ -134,8 +129,8 @@ public sealed class ProcessRunner : IDisposable
                 return new ProcessResult
                 {
                     ExitCode = -1,
-                    StdOut = "",
-                    StdErr = "",
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
                     TimedOut = true,
                     Error = $"Process timed out after {timeout.TotalSeconds} seconds"
                 };
@@ -147,8 +142,8 @@ public sealed class ProcessRunner : IDisposable
                 return new ProcessResult
                 {
                     ExitCode = -1,
-                    StdOut = "",
-                    StdErr = "",
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
                     Cancelled = true,
                     Error = "Process was cancelled"
                 };
@@ -165,60 +160,56 @@ public sealed class ProcessRunner : IDisposable
 
             await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
 
-            // ═══════════════════════════════════════════════════════════════════
-            // BOUNDARY 1 DIAGNOSTICS: Log raw bytes BEFORE any decoding
-            // ═══════════════════════════════════════════════════════════════════
-            _logger.Info($"ProcessRunner [BOUNDARY 1 - raw process output]: stdout={stdoutBytes.Length} bytes, stderr={stderrBytes.Length} bytes");
-            if (stdoutBytes.Length > 0)
-            {
-                _logger.Info($"ProcessRunner [BOUNDARY 1 - raw hex sample]: {FormatHexSample(stdoutBytes, 128)}");
-            }
+            _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stdout.raw", stdoutBytes));
+            _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stderr.raw", stderrBytes));
 
-            // ═══════════════════════════════════════════════════════════════════
-            // DECODE: Strict UTF-8 with error detection
-            // If the raw bytes are NOT valid UTF-8, this will throw or produce
-            // replacement characters — proving the corruption happened BEFORE here.
-            // ═══════════════════════════════════════════════════════════════════
-            string decodedStdout, decodedStderr;
+            string decodedStdout;
             try
             {
                 decodedStdout = s_strictUtf8.GetString(stdoutBytes);
             }
             catch (DecoderFallbackException ex)
             {
-                _logger.Error($"ProcessRunner [BOUNDARY 1 - INVALID UTF-8 in stdout]: {ex.Message}. Hex: {FormatHexSample(stdoutBytes, 256)}");
-                // Fall back to replacement-char decoding to continue processing
-                decodedStdout = Encoding.UTF8.GetString(stdoutBytes);
+                _logger.Error($"ProcessRunner: stdout is not valid UTF-8: {ex.Message}");
+                return new ProcessResult
+                {
+                    ExitCode = process.ExitCode,
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    Error = "Process stdout contained invalid UTF-8 bytes"
+                };
             }
 
+            string decodedStderr;
             try
             {
                 decodedStderr = s_strictUtf8.GetString(stderrBytes);
             }
             catch (DecoderFallbackException ex)
             {
-                _logger.Error($"ProcessRunner [BOUNDARY 1 - INVALID UTF-8 in stderr]: {ex.Message}. Hex: {FormatHexSample(stderrBytes, 256)}");
-                decodedStderr = Encoding.UTF8.GetString(stderrBytes);
+                _logger.Error($"ProcessRunner: stderr is not valid UTF-8: {ex.Message}");
+                return new ProcessResult
+                {
+                    ExitCode = process.ExitCode,
+                    StdOut = decodedStdout,
+                    StdErr = string.Empty,
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    Error = "Process stderr contained invalid UTF-8 bytes"
+                };
             }
 
-            // ═══════════════════════════════════════════════════════════════════
-            // BOUNDARY 2: Decoded string — log code points for comparison
-            // ═══════════════════════════════════════════════════════════════════
-            _logger.Info($"ProcessRunner [BOUNDARY 2 - decoded string]: stdout={decodedStdout.Length} chars, stderr={decodedStderr.Length} chars");
-            if (decodedStdout.Length > 0)
-            {
-                _logger.Info($"ProcessRunner [BOUNDARY 2 - code points sample]: {FormatCodePoints(decodedStdout, 128)}");
-            }
+            _logger.Info(TextPayloadDiagnostics.DescribeText("2.process.stdout.decoded", decodedStdout));
+            _logger.Info(TextPayloadDiagnostics.DescribeText("2.process.stderr.decoded", decodedStderr));
 
-            // Split for progress reporting ONLY — the decoded strings are the source of truth.
-            // Line splitting must be observational and must not become the source of returned output.
+            // Progress reporting is observational only; decodedStdout remains the source of truth.
             if (progress != null)
             {
                 var stdoutLines = decodedStdout.Split(s_newlineSeparators, StringSplitOptions.None);
                 foreach (var line in stdoutLines)
-                {
                     progress.Report(line);
-                }
             }
 
             var exitCode = process.ExitCode;
@@ -239,8 +230,8 @@ public sealed class ProcessRunner : IDisposable
             return new ProcessResult
             {
                 ExitCode = -1,
-                StdOut = "",
-                StdErr = "",
+                StdOut = string.Empty,
+                StdErr = string.Empty,
                 Error = $"Failed to start process: {ex.Message}"
             };
         }
@@ -249,22 +240,16 @@ public sealed class ProcessRunner : IDisposable
             try
             {
                 if (process != null && !process.HasExited)
-                {
                     KillProcessTree(process);
-                }
             }
             catch (InvalidOperationException)
             {
-                // Process was never started (e.g. executable not found)
+                // Process was never started.
             }
             process?.Dispose();
         }
     }
 
-    /// <summary>
-    /// Reads all bytes from a stream until EOF. Used to capture raw process output
-    /// before any string decoding — the earliest possible observation point.
-    /// </summary>
     private static async Task<byte[]> ReadAllBytesAsync(Stream stream, CancellationToken cancellationToken)
     {
         using var ms = new MemoryStream();
@@ -278,78 +263,34 @@ public sealed class ProcessRunner : IDisposable
         return ms.ToArray();
     }
 
-    /// <summary>
-    /// Formats a byte array as a hex string for diagnostic logging.
-    /// Shows first N bytes in hex with ASCII representation.
-    /// </summary>
-    private static string FormatHexSample(byte[] bytes, int maxBytes)
-    {
-        if (bytes.Length == 0) return "(empty)";
-        var len = Math.Min(bytes.Length, maxBytes);
-        var sb = new StringBuilder(len * 3 + 20);
-        sb.Append($"{bytes.Length} total bytes, first {len}: ");
-        for (int i = 0; i < len; i++)
-        {
-            sb.Append($"{bytes[i]:X2} ");
-            if ((i + 1) % 32 == 0 && i + 1 < len) sb.Append("\n    ");
-        }
-        if (bytes.Length > maxBytes) sb.Append($"... ({bytes.Length - maxBytes} more)");
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Formats a string's Unicode code points for diagnostic logging.
-    /// Shows each character as U+XXXX to reveal encoding corruption.
-    /// </summary>
-    private static string FormatCodePoints(string text, int maxChars)
-    {
-        if (string.IsNullOrEmpty(text)) return "(empty)";
-        var len = Math.Min(text.Length, maxChars);
-        var sb = new StringBuilder(len * 7);
-        for (int i = 0; i < len; i++)
-        {
-            var c = text[i];
-            if (c >= 0x20 && c < 0x7F)
-                sb.Append(c); // Printable ASCII — show as-is
-            else
-                sb.Append($"U+{(int)c:X4} "); // Show code point
-        }
-        if (text.Length > maxChars) sb.Append($"... ({text.Length - maxChars} more)");
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Kills the process and its children to prevent orphaned processes.
-    /// </summary>
     private static void KillProcessTree(Process process)
     {
         try
         {
             if (!process.HasExited)
-            {
                 process.Kill(entireProcessTree: true);
-            }
         }
         catch
         {
-            // Best-effort kill
-            try { if (!process.HasExited) process.Kill(); } catch { }
+            // Some Windows/.NET combinations cannot kill an entire tree.
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill();
+            }
+            catch
+            {
+                // Best effort only.
+            }
         }
     }
 
-    /// <summary>
-    /// Strips ANSI escape sequences from text.
-    /// Should be called at the presentation boundary, not during capture.
-    /// </summary>
     public static string StripAnsiEscapes(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
         return AnsiEscapePattern.Replace(text, string.Empty);
     }
 
-    /// <summary>
-    /// Computes the SHA-256 hash of a UTF-8 encoded string.
-    /// </summary>
     public static string ComputeSha256(string text)
     {
         var bytes = Encoding.UTF8.GetBytes(text);
@@ -359,38 +300,25 @@ public sealed class ProcessRunner : IDisposable
 
     private static string Truncate(string s, int maxLength)
     {
-        if (s == null) return "";
+        if (s == null) return string.Empty;
         return s.Length <= maxLength ? s : string.Concat(s.AsSpan(0, maxLength), "...");
     }
 
     public void Dispose()
     {
-        // No persistent state to dispose
+        // No persistent state to dispose.
     }
 }
 
-/// <summary>
-/// Result of a process execution.
-/// </summary>
 public sealed class ProcessResult
 {
     public int ExitCode { get; init; }
-    public string StdOut { get; init; } = "";
-    public string StdErr { get; init; } = "";
+    public string StdOut { get; init; } = string.Empty;
+    public string StdErr { get; init; } = string.Empty;
     public bool TimedOut { get; init; }
     public bool Cancelled { get; init; }
     public string? Error { get; init; }
     public bool Success => ExitCode == 0 && Error == null;
-
-    /// <summary>
-    /// Raw bytes captured from process stdout BEFORE string decoding.
-    /// Used for encoding diagnostics — may be null if raw capture was not performed.
-    /// </summary>
     public byte[]? RawStdoutBytes { get; init; }
-
-    /// <summary>
-    /// Raw bytes captured from process stderr BEFORE string decoding.
-    /// Used for encoding diagnostics — may be null if raw capture was not performed.
-    /// </summary>
     public byte[]? RawStderrBytes { get; init; }
 }

@@ -1,0 +1,65 @@
+name: Diagnose format once
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'agent/response-fidelity-deployment-diagnostics'
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out pull request merge
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+
+      - name: Restore locked solution
+        shell: pwsh
+        run: dotnet restore TiaAgent.sln --locked-mode
+
+      - name: Diagnose formatting
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          dotnet format TiaAgent.sln --no-restore --verify-no-changes --verbosity diagnostic *> verify-format.log
+          $verifyExitCode = $LASTEXITCODE
+
+          if ($verifyExitCode -eq 0) {
+            Write-Host "Formatting verification passed on the pull request merge commit."
+            exit 0
+          }
+
+          dotnet format TiaAgent.sln --no-restore *> apply-format.log
+          $changedFiles = @(git diff --name-only)
+          $tail = (Get-Content -LiteralPath verify-format.log | Select-Object -Last 80) -join [Environment]::NewLine
+          $changedText = if ($changedFiles.Count -eq 0) { '(none)' } else { $changedFiles -join [Environment]::NewLine }
+
+          @(
+            'One-time format diagnostic on the PR merge commit:',
+            '',
+            'Files changed by `dotnet format`:',
+            '~~~text',
+            $changedText,
+            '~~~',
+            '',
+            'Verification log tail:',
+            '~~~text',
+            $tail,
+            '~~~'
+          ) | Set-Content -LiteralPath format-diagnostic.md -Encoding UTF8
+
+          gh pr comment $env:PR_NUMBER --body-file format-diagnostic.md
+          exit $verifyExitCode

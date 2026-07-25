@@ -178,15 +178,29 @@
     <Message Importance="high" Text="=== Installing Add-In to TIA Portal ===" />
 
     <MakeDir Directories="$(AddInDeployDir)" Condition="!Exists('$(AddInDeployDir)')" />
+
+    <!-- Remove every previously installed package for this product, including a package
+         with the same version. A running TIA Portal process may lock the file; in that
+         case installation must fail instead of silently retaining an older binary. -->
+    <Exec
+      Command="powershell -NoProfile -Command &quot;$ErrorActionPreference = 'Stop'; Get-ChildItem -LiteralPath '$(AddInDeployDir)' -Filter 'TiaAgent-*.addin' -File -ErrorAction SilentlyContinue | Remove-Item -Force; Write-Host 'Removed stale TiaAgent Add-In packages.'&quot;"
+      ConsoleToMSBuild="true" />
+
     <Copy SourceFiles="$(AddInPackagePath)"
           DestinationFolder="$(AddInDeployDir)"
-          SkipUnchangedFiles="true"
+          SkipUnchangedFiles="false"
           Retries="12"
           RetryDelayMilliseconds="500" />
-    <Message Importance="high"
-             Text="Deployed to $(AddInDeployDir)\TiaAgent-$(PublisherVersion).addin" />
 
-    <Message Importance="high" Text="=== Add-In installed. Restart TIA Portal to load. ===" />
+    <!-- Verify that the exact package built in artifacts/ is now installed. -->
+    <Exec
+      Command="powershell -NoProfile -Command &quot;$ErrorActionPreference = 'Stop'; $source = (Get-FileHash -LiteralPath '$(AddInPackagePath)' -Algorithm SHA256).Hash; $installedPath = Join-Path '$(AddInDeployDir)' 'TiaAgent-$(PublisherVersion).addin'; if (-not (Test-Path -LiteralPath $installedPath)) { throw ('Installed Add-In not found: ' + $installedPath) }; $installed = (Get-FileHash -LiteralPath $installedPath -Algorithm SHA256).Hash; if ($source -ne $installed) { throw ('Installed Add-In hash mismatch. source=' + $source + ', installed=' + $installed) }; Write-Host ('Installed Add-In SHA-256: ' + $installed)&quot;"
+      ConsoleToMSBuild="true" />
+
+    <Message Importance="high"
+             Text="Deployed and hash-verified: $(AddInDeployDir)\TiaAgent-$(PublisherVersion).addin" />
+
+    <Message Importance="high" Text="=== Add-In installed. Terminate TIA Portal completely, then restart it to load this binary. ===" />
   </Target>
 
 </Project>

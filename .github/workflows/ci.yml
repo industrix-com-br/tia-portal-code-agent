@@ -84,6 +84,9 @@ jobs:
   build-and-test:
     name: Build and test
     needs: serial-gate
+    # Keep validation evidence available even when an administrative gate fails.
+    # The workflow still fails overall because serial-gate remains a required job.
+    if: always()
     runs-on: windows-latest
     timeout-minutes: 15
 
@@ -107,10 +110,20 @@ jobs:
       - name: Check code formatting
         shell: pwsh
         run: |
-          dotnet format TiaAgent.sln --verify-no-changes
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Code formatting violations detected. Run 'dotnet format TiaAgent.sln' locally and commit the fixes."
-            exit 1
+          dotnet restore TiaAgent.sln --locked-mode *> restore-format.log
+          $restoreExitCode = $LASTEXITCODE
+          if ($restoreExitCode -ne 0) {
+            Get-Content -LiteralPath restore-format.log | Select-Object -Last 120
+            Write-Error "Locked restore failed before formatting. Refresh and commit packages.lock.json files."
+            exit $restoreExitCode
+          }
+
+          dotnet format TiaAgent.sln --no-restore --verify-no-changes *> dotnet-format.log
+          $formatExitCode = $LASTEXITCODE
+          if ($formatExitCode -ne 0) {
+            Get-Content -LiteralPath dotnet-format.log | Select-Object -Last 120
+            Write-Error "Code formatting verification failed. Run 'dotnet format TiaAgent.sln --no-restore' locally and commit the fixes."
+            exit $formatExitCode
           }
 
       - name: Run build and test script
@@ -229,4 +242,3 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
-
