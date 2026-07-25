@@ -64,9 +64,9 @@ Every permission change requires review of `Config.xml`, package generation, Add
 
 - Bind services to `127.0.0.1` or equivalent loopback only.
 - Never bind to `0.0.0.0`.
-- Protect non-health Bridge endpoints with the transient bearer token.
-- Store transient credentials under `%LOCALAPPDATA%\TiaAgent\runtime\secrets\`.
-- Do not include credentials in `runtime.json` or logs.
+- Protect non-health Bridge endpoints with the bearer token stored at `%LOCALAPPDATA%\TiaAgent\bridge.token`.
+- Keep supervisor-generated transient secrets under `%LOCALAPPDATA%\TiaAgent\runtime\secrets\`.
+- Do not include either credential class in `runtime.json`, logs, source control, or documentation examples.
 - Validate the advertised endpoint with a health request.
 - Apply request, response, and timeout limits.
 
