@@ -9,18 +9,27 @@ A local AI-assisted engineering interface for Siemens TIA Portal V21. The `TiaAg
 
 ## Installation
 
-```powershell
-# Stable
-dotnet tool install --global TiaAgent.Cli
+> [!IMPORTANT]
+> Only prerelease versions are currently published. Without `--prerelease` or an explicit `--version`, the .NET tool command searches only for a stable release and may report that the package was not found.
 
-# Prerelease
+```powershell
+# Recommended while the project is in prerelease
 dotnet tool install --global TiaAgent.Cli --prerelease
+
+# Install a specific prerelease version
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.5
 
 # Install the bundled payload
 tia-agent install
 
 # Start services
 tia-agent start
+```
+
+After the first stable version is published, it can be installed with:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli
 ```
 
 Restart TIA Portal V21, enable **TIA Portal Code Agent** under **Options > Settings > Add-Ins**, then right-click a supported project object and choose an action under **AI Code Agent**.
