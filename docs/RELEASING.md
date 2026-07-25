@@ -1,116 +1,97 @@
-# Release Policy
+# Releasing
 
-This document defines how changes reach a TIA Portal Code Agent release. It specifies policy only; workflow automation is implemented by later roadmap items.
+A release is produced from one immutable Git tag and published as one NuGet package containing the complete installation payload.
 
-## Development model
+## 1. Choose the version
 
-The repository uses trunk-based development with protected `main` and short-lived branches.
+Follow [`VERSIONING.md`](VERSIONING.md). Examples:
 
-- `main` is the only long-lived development branch and must remain releasable.
-- Work is performed on the single branch allowed by `.github/serial-roadmap.json`.
-- Branch names follow `issue/<issue>-<sequence-lowercase>-<slug>`.
-- Changes enter `main` through reviewed pull requests using squash merge.
-- Release branches are not used for normal development.
-- Published releases are identified by immutable tags on `main`.
+```text
+0.3.0-beta.1
+0.3.0-rc.1
+0.3.0
+```
 
-Long-running stabilization work must remain exceptional. A release candidate is represented by a tag, not by a permanent branch.
+Confirm the target commit is merged into `main` and the `CI` check passes.
 
-## Release channels
+## 2. Validate locally
 
-### Alpha
+On a Windows machine with TIA Portal V21 and signing credentials available:
 
-Alpha releases validate incomplete integration, packaging, installation, and architectural decisions. They may omit planned capabilities and may require a clean installation.
+```powershell
+.\build.ps1 release -Version 0.3.0-beta.1
+```
 
-### Beta
+The command cleans previous outputs, builds, tests, packages and signs the Add-In, verifies it, assembles the payload, creates the NuGet package, validates its contents, and tests local tool installation.
 
-Beta begins when the target feature set is complete. Beta changes are limited to defects, security, compatibility, installation, documentation, and validation findings. New scope requires an explicit roadmap decision.
+## 3. Create the tag
 
-### Release candidate
+```powershell
+git switch main
+git pull --ff-only
+git tag -a v0.3.0-beta.1 -m "Release v0.3.0-beta.1"
+git push origin v0.3.0-beta.1
+```
 
-An RC is a build believed suitable for stable publication. Only release-blocking corrections may produce another RC.
+The tag triggers `.github/workflows/pipeline.yml`. The publication job extracts the version, runs:
 
-### Stable
+```powershell
+.\build.ps1 release -Version 0.3.0-beta.1
+```
 
-A stable release is the supported distribution for general use. It must have complete artifacts, checksums, release notes, installation guidance, compatibility declarations, and rollback information.
+It then authenticates to NuGet through Trusted Publishing and pushes the generated `.nupkg` with `--skip-duplicate`.
 
-## Release preparation
+## 4. Validate NuGet publication
 
-For every release:
+After NuGet finishes processing the package, verify the exact version is visible and install it in a clean location:
 
-1. Select the version according to `docs/VERSIONING.md`.
-2. Confirm all first-party components resolve to the same product version.
-3. Confirm the target commit is on `main` and all required checks passed.
-4. Confirm the declared TIA Portal compatibility in `docs/COMPATIBILITY.md`.
-5. Build, test, package, sign, generate release metadata (release manifest, SBOM, SHA256SUMS), and verify using the consolidated release workflow (`.github/workflows/release.yml`) according to mandatory release signing policy (`docs/SIGNING.md`).
-6. Generate release notes covering changes, compatibility, known limitations, upgrade steps, and rollback.
-7. Create the immutable annotated tag `vX.Y.Z[-prerelease]`.
-8. Publish all artifacts from that exact tagged commit.
-9. Validate installation and reported versions from the published artifacts.
+```powershell
+# Stable
+dotnet tool install --global TiaAgent.Cli --version 0.3.0
 
-A failed publication is corrected with a new version. Tags and released artifacts are never silently replaced.
+# Prerelease
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.1
+```
 
-## Breaking changes
+Then run:
 
-A change is breaking when an existing supported installation cannot continue without manual migration or when a supported public contract changes incompatibly. Examples include:
+```powershell
+tia-agent version
+tia-agent doctor
+```
 
-- CLI command or exit-code incompatibility;
-- configuration key removal or semantic change;
-- IPC, MCP, HTTP, manifest, or schema incompatibility;
-- installed path or activation behavior that invalidates an existing installation;
-- removal of a supported TIA Portal version;
-- an upgrade that cannot preserve or restore user configuration.
+## GitHub and NuGet.org configuration
 
-Breaking changes require:
+### GitHub secrets
 
-- a MAJOR version at or after `1.0.0`;
-- a MINOR version before `1.0.0`;
-- explicit migration and rollback documentation;
-- prominent release-note disclosure;
-- validation from the oldest supported upgrade source.
+Configure:
 
-## Support policy
+- `NUGET_USER`: NuGet.org account username used by `NuGet/login@v1`;
+- `TIA_SIGNING_CERT_PFX_BASE64`;
+- `TIA_SIGNING_CERT_PASSWORD`;
+- optionally `TIA_SIGNING_CERT_THUMBPRINT`.
 
-- Stable releases are the only generally supported channel.
-- Prereleases are supported for evaluation and defect reporting, not production guarantees.
-- The latest stable minor line receives normal fixes.
-- Security or critical reliability fixes may be backported when maintainers explicitly designate a supported older line.
-- Support for a version includes only the TIA Portal and operating-system combinations listed in the compatibility matrix.
+### NuGet Trusted Publishing
 
-No indefinite support period is implied. A release may be declared end-of-support in release notes or maintained support documentation, with a recommended upgrade target.
+On NuGet.org, create a Trusted Publishing policy for:
 
-## Upgrade policy
+- repository owner: `industrix-com-br`;
+- repository: `tia-portal-code-agent`;
+- workflow file: `pipeline.yml`;
+- environment: only when the workflow is configured to use one.
 
-Within a stable major line, upgrades must preserve supported configuration and user-managed data or provide an automated, documented migration.
+The workflow requests `id-token: write`, calls `NuGet/login@v1`, and uses the temporary API key returned by that action. Do not configure a permanent NuGet API key in the normal release workflow.
 
-Each stable release must define:
+### First package bootstrap
 
-- supported source versions;
-- whether in-place upgrade is supported;
-- configuration or schema migrations;
-- service/process shutdown requirements;
-- verification after upgrade;
-- rollback prerequisites.
+NuGet.org may require the package ID to exist before a Trusted Publishing policy can be finalized. When necessary, publish the first version manually with a short-lived scoped API key, configure Trusted Publishing immediately afterward, revoke the key, and do not add hybrid API-key fallback logic to the workflow.
 
-Skipping versions is supported only when the target release explicitly states that the source version is accepted.
+## Runner requirement
 
-## Downgrade and rollback policy
+Publication uses the self-hosted Windows release runner labels:
 
-Downgrade is not assumed to be safe. Rollback means restoring the previously active complete product version and its compatible configuration/state.
+```text
+self-hosted, Windows, x64, tia-v21, release-runner
+```
 
-A release must not claim rollback support unless it can:
-
-1. retain or restore the previous version's artifacts;
-2. restore compatible configuration and manifests;
-3. stop processes from the failed version;
-4. atomically reactivate the prior version;
-5. verify the prior version after activation.
-
-If a migration is irreversible, the release notes must state this before installation and require a backup or clean reinstall path.
-
-## Hotfixes
-
-A stable hotfix uses a PATCH release from a fix merged through `main`. The release is tagged from `main`; no unreviewed artifact may be published from a local or detached commit.
-
-## Release ownership
-
-Maintainers approve channel promotion and stable publication. Automation may enforce gates but does not replace the explicit decision that a release is ready.
+That runner must have TIA Portal V21, the Siemens Add-In Publisher, .NET SDK 8, and access to the signing secrets. Pull-request CI never runs on this machine.

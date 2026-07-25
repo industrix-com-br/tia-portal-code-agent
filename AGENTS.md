@@ -91,32 +91,10 @@ Read operations: `browse_project_tree`, `get_block_content`, `list_tag_tables`, 
 ## Working in this repo
 
 - **Specs are the source of truth.** If code conflicts with specs, the spec wins until a decision updates it.
-- **Build:** `dotnet build TiaAgent.sln`
-- **Test:** `dotnet test TiaAgent.sln`
+- **Build:** `.\build.ps1 build`
+- **Test:** `.\build.ps1 test`
+- **Package:** `.\build.ps1 pack`
+- **Release:** `.\build.ps1 release -Version X.Y.Z[-prerelease]`
 - **Engineering objects are local-scope only.** Never store `IEngineeringObject` in fields, properties, statics, caches, or DI singletons. Re-resolve on every operation.
 - **All operations need `CancellationToken`.** All errors must be structured (see error codes in ARCHITECTURE.md).
 - **Every task needs a `correlationId`** for traceability.
-
-## Serial issue execution
-
-The release roadmap in `.github/serial-roadmap.json` is strictly serial. Only the single item with status `active` may be implemented.
-
-Before starting work:
-
-1. Read `.github/serial-roadmap.json`.
-2. Confirm the requested issue number and `REL-XXX` key match the active item.
-3. Confirm the predecessor is `done`.
-4. Pull the latest `main`.
-5. Create `issue/<number>-<sequence-lowercase>-<slug>`.
-6. Keep the implementation limited to the active issue.
-
-Do not:
-
-- start, branch, or open a PR for a blocked issue;
-- combine multiple roadmap issues in one PR;
-- skip or reorder roadmap items;
-- change roadmap keys, issue numbers, titles, or order;
-- close an issue manually without the implementation PR;
-- modify future work unless the active issue explicitly requires it.
-
-Every implementation PR must close exactly the active issue and atomically advance the roadmap by one item. The PR title, body metadata, branch name, and roadmap transition are enforced by `scripts/ci/validate-serial-roadmap.ps1` through the consolidated `ci.yml` workflow.

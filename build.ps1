@@ -1,26 +1,29 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    TIA Portal Code Agent build, test, packaging, verification, and installation tool.
+    Build and release entrypoint for TIA Portal Code Agent.
 
 .EXAMPLE
-    .\build.ps1 all
-    .\build.ps1 all -Version 0.2.0-beta.1
+    .\build.ps1 build
+    .\build.ps1 test
+    .\build.ps1 pack -Version 0.3.0-beta.1
+    .\build.ps1 release -Version 0.3.0-beta.1
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("build", "test", "pack-addin", "pack-cli", "verify-addin", "pack-release", "verify-release", "install-dev", "all", "clean", "mcp", "help")]
+    [ValidateSet("build", "test", "pack", "release", "install-dev", "clean", "help")]
     [string]$Command = "help",
 
     [ValidatePattern('^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+|-dev)?$')]
-    [string]$Version,
-
-    [switch]$RequireSigning
+    [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
-$Config = "Release"
+$Configuration = "Release"
+$ArtifactsDir = Join-Path $Root "artifacts"
+$Solution = Join-Path $Root "TiaAgent.sln"
+$ReleaseVersionPattern = '\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?'
 
 function Resolve-ProductVersion {
     param([string]$ExplicitVersion)
@@ -28,13 +31,13 @@ function Resolve-ProductVersion {
     if ($ExplicitVersion) { return $ExplicitVersion }
     if ($env:TIA_AGENT_VERSION) { return $env:TIA_AGENT_VERSION }
 
-    if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -match '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
+    if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -match "^v(?<version>$ReleaseVersionPattern)$") {
         return $Matches.version
     }
 
     try {
         $tag = (& git -C $Root describe --tags --exact-match HEAD 2>$null).Trim()
-        if ($LASTEXITCODE -eq 0 -and $tag -match '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
+        if ($LASTEXITCODE -eq 0 -and $tag -match "^v(?<version>$ReleaseVersionPattern)$") {
             return $Matches.version
         }
     } catch { }
@@ -44,10 +47,12 @@ function Resolve-ProductVersion {
 
 function Resolve-CommitSha {
     if ($env:GITHUB_SHA) { return $env:GITHUB_SHA }
+
     try {
         $sha = (& git -C $Root rev-parse HEAD 2>$null).Trim()
         if ($LASTEXITCODE -eq 0 -and $sha) { return $sha }
     } catch { }
+
     return "unknown"
 }
 
@@ -55,51 +60,42 @@ $ProductVersion = Resolve-ProductVersion -ExplicitVersion $Version
 $CommitSha = Resolve-CommitSha
 $MsBuildVersionArguments = @("-p:Version=$ProductVersion", "-p:SourceRevisionId=$CommitSha")
 
-# Auto-detect TIA Portal V21 assemblies.
 $tiaBasePath = "C:\Program Files\Siemens\Automation\Portal V21"
 $tiaNet48Path = "$tiaBasePath\PublicAPI\V21\net48"
 $tiaAddInPath = "$tiaBasePath\PublicAPI\V21"
 if (Test-Path "$tiaNet48Path\Siemens.Engineering.Base.dll") {
     $env:TiaPublicApiDir = $tiaNet48Path
     $env:SiemensAssembliesExist = "true"
-    Write-Host "  TIA Openness V21 detected: $tiaNet48Path" -ForegroundColor Gray
+    Write-Host "TIA Openness V21 detected: $tiaNet48Path" -ForegroundColor Gray
 }
 if (Test-Path "$tiaAddInPath\Siemens.Engineering.AddIn.Base.dll") {
     $env:TiaAddInApiDir = $tiaAddInPath
-    Write-Host "  TIA Add-In V21 detected: $tiaAddInPath" -ForegroundColor Gray
 }
 
-function Write-Header($text) {
+function Write-Header([string]$Text) {
     Write-Host ""
     Write-Host "======================================" -ForegroundColor Cyan
-    Write-Host "  $text" -ForegroundColor Cyan
+    Write-Host "  $Text" -ForegroundColor Cyan
     Write-Host "======================================" -ForegroundColor Cyan
-    Write-Host ""
 }
-function Write-Step($step, $total, $text) { Write-Host "[$step/$total] $text" -ForegroundColor Yellow }
-function Write-Ok($text) { Write-Host "  OK: $text" -ForegroundColor Green }
-function Write-Info($text) { Write-Host "  $text" -ForegroundColor Gray }
+
+function Write-Ok([string]$Text) { Write-Host "  OK: $Text" -ForegroundColor Green }
+function Write-Info([string]$Text) { Write-Host "  $Text" -ForegroundColor Gray }
 
 function Invoke-Dotnet {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
-    # Insert MsBuildVersionArguments before '--' separator (if present)
-    # so they are passed to dotnet, not to the application.
+
     $separatorIndex = [Array]::IndexOf($Arguments, '--')
     if ($separatorIndex -ge 0) {
-        $before = $Arguments[0..($separatorIndex - 1)]
+        $before = if ($separatorIndex -gt 0) { $Arguments[0..($separatorIndex - 1)] } else { @() }
         $after = $Arguments[$separatorIndex..($Arguments.Length - 1)]
         & dotnet @before @MsBuildVersionArguments @after
     } else {
         & dotnet @Arguments @MsBuildVersionArguments
     }
-    if ($LASTEXITCODE -ne 0) { throw "dotnet command failed with exit code $LASTEXITCODE" }
-}
 
-function Ensure-OpcSigner {
-    $opcSignerExe = "$Root\tools\OpcSigner\bin\$Config\net48\OpcSigner.exe"
-    if (-not (Test-Path $opcSignerExe)) {
-        Write-Info "Building OpcSigner tool..."
-        Invoke-Dotnet @("build", "$Root\tools\OpcSigner\OpcSigner.csproj", "--configuration", $Config, "--verbosity", "quiet")
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet command failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -108,269 +104,260 @@ function Invoke-MsBuildTarget {
         [Parameter(Mandatory = $true)][string]$Target,
         [string[]]$ExtraArguments = @()
     )
-    & dotnet msbuild "$Root\src\TiaAgent.AddIn\TiaAgent.AddIn.csproj" -t:$Target -p:Configuration=$Config @MsBuildVersionArguments @ExtraArguments
-    if ($LASTEXITCODE -ne 0) { throw "MSBuild target '$Target' failed with exit code $LASTEXITCODE" }
-}
 
-function Invoke-Build {
-    Write-Header "BUILD $ProductVersion"
-    Write-Step 1 3 "Restoring packages..."
-    Invoke-Dotnet @("restore", "$Root\TiaAgent.sln", "--force-evaluate", "--verbosity", "quiet")
-    Write-Step 2 3 "Compiling solution..."
-    Invoke-Dotnet @("build", "$Root\TiaAgent.sln", "--configuration", $Config, "--no-restore", "--verbosity", "quiet")
-    Write-Step 3 3 "Verifying artifacts..."
-    foreach ($artifact in @(
-        "$Root\src\TiaAgent.AddIn\bin\$Config\net48\TiaAgent.AddIn.dll",
-        "$Root\src\TiaAgent.Bridge\bin\$Config\net8.0\TiaAgent.Bridge.dll",
-        "$Root\src\TiaAgent.Cli\bin\$Config\net8.0\TiaAgent.Cli.dll"
-    )) {
-        if (-not (Test-Path $artifact)) { throw "Expected build artifact not found: $artifact" }
-        Write-Ok (Split-Path $artifact -Leaf)
+    & dotnet msbuild "$Root\src\TiaAgent.AddIn\TiaAgent.AddIn.csproj" -t:$Target -p:Configuration=$Configuration @MsBuildVersionArguments @ExtraArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSBuild target '$Target' failed with exit code $LASTEXITCODE"
     }
 }
 
-function Invoke-Test {
-    Write-Header "TESTS $ProductVersion"
-    # Skip integration tests that require specific Windows process behavior on the release runner
-    $filter = "FullyQualifiedName!~ProcessRunner_RunAsync_PowerShell_CorruptsUtf8&FullyQualifiedName!~ProcessRunner_RunAsync_CmdExe_PreservesUtf8"
-    Invoke-Dotnet @("test", "$Root\TiaAgent.sln", "--configuration", $Config, "--verbosity", "normal", "--no-restore", "--filter", $filter)
-    Write-Ok "All tests passed"
-}
-
-function Invoke-PackAddIn {
-    Write-Header "PACK ADD-IN $ProductVersion"
-    Ensure-OpcSigner
-    $extraArgs = @()
-    if ($RequireSigning -or $env:TIA_REQUIRE_SIGNING -eq "true" -or ($ProductVersion -match '^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -and $ProductVersion -notlike '*-dev')) {
-        $extraArgs += "-p:RequireSigning=true"
-        $env:TIA_REQUIRE_SIGNING = "true"
+function Ensure-OpcSigner {
+    $opcSignerExe = "$Root\tools\OpcSigner\bin\$Configuration\net48\OpcSigner.exe"
+    if (-not (Test-Path $opcSignerExe)) {
+        Write-Info "Building OpcSigner..."
+        Invoke-Dotnet @("build", "$Root\tools\OpcSigner\OpcSigner.csproj", "--configuration", $Configuration, "--verbosity", "minimal")
     }
-    Invoke-MsBuildTarget -Target "PackAddIn" -ExtraArguments $extraArgs
-}
-
-function Invoke-PackCli {
-    Write-Header "PACK CLI $ProductVersion"
-    $outputDir = "$Root\artifacts"
-    if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir -Force | Out-Null }
-
-    # Use a staging directory separate from the Payload source directory
-    $payloadDir = "$outputDir\cli-payload"
-    if (Test-Path $payloadDir) { Remove-Item $payloadDir -Recurse -Force }
-    New-Item -ItemType Directory -Path "$payloadDir\Bridge" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$payloadDir\AddIn" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$payloadDir\config" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$payloadDir\notices" -Force | Out-Null
-
-    # 1. Publish Bridge binaries into payload
-    Write-Info "Publishing Bridge binaries into payload..."
-    Invoke-Dotnet @("publish", "$Root\src\TiaAgent.Bridge\TiaAgent.Bridge.csproj", "--configuration", $Config, "--output", "$payloadDir\Bridge", "--no-restore")
-
-    # Ensure no Siemens assemblies are bundled in Bridge
-    Get-ChildItem "$payloadDir\Bridge" -Filter "Siemens.*.dll" | Remove-Item -Force
-
-    # 2. Copy Add-In package if available
-    $addinFiles = Get-ChildItem "$outputDir" -Filter "TiaAgent-*.addin" | Sort-Object LastWriteTime -Descending
-    if ($addinFiles.Count -gt 0) {
-        Write-Info "Bundling Add-In artifact: $($addinFiles[0].Name)"
-        Copy-Item $addinFiles[0].FullName "$payloadDir\AddIn\$($addinFiles[0].Name)" -Force
-    } else {
-        # For release builds (non-dev), the .addin is required
-        $isReleaseBuild = $ProductVersion -match '^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -and $ProductVersion -notlike '*-dev'
-        if ($isReleaseBuild) {
-            throw "Release build requires Add-In artifact. Run 'pack-addin' before 'pack-cli'."
-        }
-        Write-Info "No .addin artifact found in artifacts/. Staging placeholder manifest entry."
-    }
-
-    # 3. Copy configuration templates and notices
-    if (Test-Path "$Root\config") {
-        Copy-Item "$Root\config\*" "$payloadDir\config\" -Recurse -Force
-    }
-    if (Test-Path "$Root\THIRD_PARTY_NOTICES.md") {
-        Copy-Item "$Root\THIRD_PARTY_NOTICES.md" "$payloadDir\notices\" -Force
-    }
-    if (Test-Path "$Root\LICENSE") {
-        Copy-Item "$Root\LICENSE" "$payloadDir\notices\" -Force
-    }
-
-    # 4. Generate payload-manifest.json
-    Write-Info "Generating payload-manifest.json..."
-    $filesList = @()
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-
-    Get-ChildItem $payloadDir -Recurse -File | ForEach-Object {
-        $relPath = $_.FullName.Substring($payloadDir.Length + 1).Replace("\", "/")
-        $stream = [System.IO.File]::OpenRead($_.FullName)
-        $hashBytes = $sha256.ComputeHash($stream)
-        $stream.Close()
-        $hashStr = ([System.BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
-
-        $filesList += @{
-            relativePath = $relPath
-            sha256Hash = $hashStr
-            sizeBytes = $_.Length
-        }
-    }
-    $sha256.Dispose()
-
-    $publisherVersion = $ProductVersion -replace '-.*$', ''
-    $addinRelativePath = if (Test-Path "$payloadDir\AddIn") {
-        $a = Get-ChildItem "$payloadDir\AddIn" -Filter "*.addin" | Select-Object -First 1
-        if ($a) { "AddIn/$($a.Name)" } else { "AddIn/TiaAgent-$publisherVersion.addin" }
-    } else { "AddIn/TiaAgent-$publisherVersion.addin" }
-
-    $bridgeMainDll = "$payloadDir\Bridge\TiaAgent.Bridge.dll"
-    $bridgeHash = if (Test-Path $bridgeMainDll) {
-        $stream = [System.IO.File]::OpenRead($bridgeMainDll)
-        $sha = [System.Security.Cryptography.SHA256]::Create()
-        $hb = $sha.ComputeHash($stream)
-        $stream.Close()
-        $sha.Dispose()
-        ([System.BitConverter]::ToString($hb)).Replace("-", "").ToLowerInvariant()
-    } else { "" }
-
-    # Resolve addin hash and size from the bundled file
-    $addinHash = ""
-    $addinSize = 0
-    if (Test-Path "$payloadDir\AddIn") {
-        $addinFile = Get-ChildItem "$payloadDir\AddIn" -Filter "*.addin" | Select-Object -First 1
-        if ($addinFile) {
-            $addinStream = [System.IO.File]::OpenRead($addinFile.FullName)
-            $addinSha = [System.Security.Cryptography.SHA256]::Create()
-            $addinHashBytes = $addinSha.ComputeHash($addinStream)
-            $addinStream.Close()
-            $addinSha.Dispose()
-            $addinHash = ([System.BitConverter]::ToString($addinHashBytes)).Replace("-", "").ToLowerInvariant()
-            $addinSize = $addinFile.Length
-        }
-    }
-
-    $manifestData = @{
-        schemaVersion = 1
-        productVersion = $ProductVersion
-        commitSha = $CommitSha
-        builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ")
-        compatibility = @{
-            tiaPortalVersion = "V21"
-            opennessVersion = "V21"
-            targetFramework = "net8.0"
-        }
-        components = @{
-            bridge = @{
-                relativePath = "Bridge/TiaAgent.Bridge.dll"
-                version = $ProductVersion
-                sha256Hash = $bridgeHash
-                sizeBytes = if (Test-Path $bridgeMainDll) { (Get-Item $bridgeMainDll).Length } else { 0 }
-            }
-            addin = @{
-                relativePath = $addinRelativePath
-                version = $ProductVersion
-                sha256Hash = $addinHash
-                sizeBytes = $addinSize
-            }
-        }
-        files = $filesList
-    }
-
-    $jsonStr = $manifestData | ConvertTo-Json -Depth 5
-    [System.IO.File]::WriteAllText("$payloadDir\payload-manifest.json", $jsonStr)
-
-    # 5. Pack CLI tool
-    Invoke-Dotnet @("pack", "$Root\src\TiaAgent.Cli\TiaAgent.Cli.csproj", "--configuration", $Config, "--output", $outputDir)
-
-    # 6. Verify payload in produced .nupkg
-    $nupkg = Get-ChildItem "$outputDir" -Filter "TiaAgent.Cli.*.nupkg" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($nupkg) {
-        Write-Info "Verifying payload in $($nupkg.Name)..."
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($nupkg.FullName)
-        try {
-            $entries = @($zip.Entries | ForEach-Object { $_.FullName })
-            $requiredEntries = @(
-                'tools/net8.0/any/payload/payload-manifest.json',
-                'tools/net8.0/any/payload/Bridge/TiaAgent.Bridge.dll',
-                'tools/net8.0/any/payload/notices/THIRD_PARTY_NOTICES.md'
-            )
-
-            # Check for Add-In file if it should be present
-            $publisherVersion = $ProductVersion -replace '-.*$', ''
-            $expectedAddInEntry = "tools/net8.0/any/payload/AddIn/TiaAgent-$publisherVersion.addin"
-            $hasAddIn = $entries -contains $expectedAddInEntry
-            if ($hasAddIn) {
-                Write-Ok "CLI package includes Add-In artifact"
-            } else {
-                $isReleaseBuild = $ProductVersion -match '^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -and $ProductVersion -notlike '*-dev'
-                if ($isReleaseBuild) {
-                    throw "Release CLI package missing Add-In artifact: $expectedAddInEntry"
-                }
-                Write-Info "CLI package does not include Add-In artifact (dev build)"
-            }
-            foreach ($req in $requiredEntries) {
-                if (-not ($entries -contains $req)) {
-                    throw "CLI package missing required payload file: $req"
-                }
-            }
-            Write-Ok "CLI package payload verification passed"
-        } finally {
-            $zip.Dispose()
-        }
-    }
-
-    Write-Ok "CLI package created at $outputDir"
-}
-
-function Invoke-VerifyAddIn {
-    Write-Header "VERIFY ADD-IN $ProductVersion"
-    Ensure-OpcSigner
-    $extraArgs = @()
-    if ($RequireSigning -or $env:TIA_REQUIRE_SIGNING -eq "true" -or ($ProductVersion -match '^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -and $ProductVersion -notlike '*-dev')) {
-        $extraArgs += "-p:RequireSigning=true"
-        $env:TIA_REQUIRE_SIGNING = "true"
-    }
-    Invoke-MsBuildTarget -Target "VerifyAddIn" -ExtraArguments $extraArgs
-}
-
-function Invoke-PackRelease {
-    Write-Header "PACK RELEASE METADATA $ProductVersion"
-    $outputDir = "$Root\artifacts"
-    if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir -Force | Out-Null }
-
-    Write-Info "Generating release manifest, SBOM, and SHA256SUMS..."
-    Invoke-Dotnet @("run", "--project", "$Root\src\TiaAgent.Cli\TiaAgent.Cli.csproj", "--configuration", $Config, "--", "generate-release-metadata", "--dir", $outputDir, "--version", $ProductVersion, "--commit", $CommitSha, "--repo-root", $Root)
-
-    Write-Ok "Release metadata generated at $outputDir"
-}
-
-function Invoke-VerifyRelease {
-    Write-Header "VERIFY RELEASE METADATA $ProductVersion"
-    $outputDir = "$Root\artifacts"
-    if (-not (Test-Path $outputDir)) {
-        throw "Release artifacts directory not found: $outputDir"
-    }
-
-    Write-Info "Verifying release manifest, SBOM, and SHA256SUMS..."
-    Invoke-Dotnet @("run", "--project", "$Root\src\TiaAgent.Cli\TiaAgent.Cli.csproj", "--configuration", $Config, "--", "verify-release", "--dir", $outputDir, "--version", $ProductVersion)
-
-    Write-Ok "Release metadata verification passed"
-}
-
-function Invoke-InstallDev {
-    Write-Header "INSTALL DEV $ProductVersion"
-    Invoke-MsBuildTarget -Target "InstallAddIn"
 }
 
 function Invoke-Clean {
     Write-Header "CLEAN"
     Get-ChildItem "$Root\src", "$Root\tests", "$Root\tools" -Directory -Recurse -Include bin,obj -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path "$Root\artifacts") { Remove-Item "$Root\artifacts" -Recurse -Force }
-    Write-Ok "Cleanup completed"
+    if (Test-Path $ArtifactsDir) {
+        Remove-Item $ArtifactsDir -Recurse -Force
+    }
+    Write-Ok "Build outputs removed"
 }
 
-function Invoke-Mcp {
-    Write-Header "MCP SERVER"
-    Write-Info "Install: dotnet tool install -g TiaMcpServer"
-    Write-Info "Validate: tia-mcp doctor"
+function Invoke-Build {
+    Write-Header "BUILD $ProductVersion"
+    Invoke-Dotnet @("restore", $Solution, "--force-evaluate", "--verbosity", "minimal")
+    Invoke-Dotnet @("build", $Solution, "--configuration", $Configuration, "--no-restore", "--verbosity", "minimal")
+
+    foreach ($artifact in @(
+        "$Root\src\TiaAgent.AddIn\bin\$Configuration\net48\TiaAgent.AddIn.dll",
+        "$Root\src\TiaAgent.Bridge\bin\$Configuration\net8.0\TiaAgent.Bridge.dll",
+        "$Root\src\TiaAgent.Cli\bin\$Configuration\net8.0\TiaAgent.Cli.dll"
+    )) {
+        if (-not (Test-Path $artifact)) {
+            throw "Expected build artifact not found: $artifact"
+        }
+    }
+
+    Write-Ok "Solution compiled"
+}
+
+function Invoke-Test {
+    param([switch]$NoRestore)
+
+    Write-Header "TEST $ProductVersion"
+    if (-not $NoRestore) {
+        Invoke-Dotnet @("restore", $Solution, "--force-evaluate", "--verbosity", "minimal")
+    }
+
+    Invoke-Dotnet @("test", $Solution, "--configuration", $Configuration, "--no-restore", "--verbosity", "normal")
+    Write-Ok "Tests passed"
+}
+
+function Invoke-PackAddIn {
+    param([switch]$RequireSigning)
+
+    Ensure-OpcSigner
+    if (-not (Test-Path $ArtifactsDir)) {
+        New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
+    }
+
+    Get-ChildItem $ArtifactsDir -Filter "TiaAgent-*.addin*" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+
+    $extraArguments = @("-p:RequireSigning=$($RequireSigning.IsPresent.ToString().ToLowerInvariant())")
+    Invoke-MsBuildTarget -Target "PackAddIn" -ExtraArguments $extraArguments
+
+    $expected = Join-Path $ArtifactsDir "TiaAgent-$ProductVersion.addin"
+    if (-not (Test-Path $expected)) {
+        throw "Expected Add-In artifact not found: $expected"
+    }
+
+    Write-Ok "Add-In packaged as $(Split-Path $expected -Leaf)"
+}
+
+function Invoke-VerifyAddIn {
+    param([switch]$RequireSigning)
+
+    $extraArguments = @("-p:RequireSigning=$($RequireSigning.IsPresent.ToString().ToLowerInvariant())")
+    Invoke-MsBuildTarget -Target "VerifyAddIn" -ExtraArguments $extraArguments
+    Write-Ok "Add-In verified"
+}
+
+function New-PayloadManifest {
+    param([string]$PayloadDir)
+
+    $files = @()
+    Get-ChildItem $PayloadDir -Recurse -File | ForEach-Object {
+        $relativePath = $_.FullName.Substring($PayloadDir.Length + 1).Replace("\", "/")
+        $files += @{
+            relativePath = $relativePath
+            sha256Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            sizeBytes = $_.Length
+        }
+    }
+
+    $bridgePath = Join-Path $PayloadDir "Bridge\TiaAgent.Bridge.dll"
+    $addInName = "TiaAgent-$ProductVersion.addin"
+    $addInPath = Join-Path $PayloadDir "AddIn\$addInName"
+
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        productVersion = $ProductVersion
+        commitSha = $CommitSha
+        builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ")
+        compatibility = [ordered]@{
+            tiaPortalVersion = "V21"
+            opennessVersion = "V21"
+            targetFramework = "net8.0"
+        }
+        components = [ordered]@{
+            bridge = [ordered]@{
+                relativePath = "Bridge/TiaAgent.Bridge.dll"
+                version = $ProductVersion
+                sha256Hash = (Get-FileHash $bridgePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                sizeBytes = (Get-Item $bridgePath).Length
+            }
+            addin = [ordered]@{
+                relativePath = "AddIn/$addInName"
+                version = $ProductVersion
+                sha256Hash = (Get-FileHash $addInPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                sizeBytes = (Get-Item $addInPath).Length
+            }
+        }
+        files = $files
+    }
+
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $PayloadDir "payload-manifest.json") -Encoding UTF8
+}
+
+function Test-NuGetPayload {
+    param([Parameter(Mandatory = $true)][string]$PackagePath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($PackagePath)
+    try {
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+        $expectedAddIn = "tools/net8.0/any/payload/AddIn/TiaAgent-$ProductVersion.addin"
+        $required = @(
+            "tools/net8.0/any/payload/payload-manifest.json",
+            "tools/net8.0/any/payload/Bridge/TiaAgent.Bridge.dll",
+            $expectedAddIn,
+            "tools/net8.0/any/payload/notices/THIRD_PARTY_NOTICES.md",
+            "tools/net8.0/any/payload/notices/LICENSE"
+        )
+
+        foreach ($entry in $required) {
+            if ($entries -notcontains $entry) {
+                throw "NuGet package is missing required payload entry: $entry"
+            }
+        }
+
+        if (-not ($entries | Where-Object { $_ -like "tools/net8.0/any/payload/config/*" })) {
+            throw "NuGet package does not contain configuration templates"
+        }
+
+        if ($entries | Where-Object { $_ -like "tools/net8.0/any/payload/Bridge/Siemens.*.dll" }) {
+            throw "NuGet payload must not contain Siemens runtime assemblies"
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+function Test-NuGetInstall {
+    param([Parameter(Mandatory = $true)][string]$PackagePath)
+
+    $installDir = Join-Path $ArtifactsDir "package-install-test"
+    if (Test-Path $installDir) {
+        Remove-Item $installDir -Recurse -Force
+    }
+
+    & dotnet tool install TiaAgent.Cli --tool-path $installDir --version $ProductVersion --add-source $ArtifactsDir --ignore-failed-sources
+    if ($LASTEXITCODE -ne 0) {
+        throw "Produced NuGet package could not be installed"
+    }
+
+    Remove-Item $installDir -Recurse -Force
+}
+
+function Invoke-PackNuGet {
+    Write-Header "PACK NUGET $ProductVersion"
+
+    if (-not (Test-Path $ArtifactsDir)) {
+        New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
+    }
+
+    $payloadDir = Join-Path $ArtifactsDir "cli-payload"
+    if (Test-Path $payloadDir) {
+        Remove-Item $payloadDir -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Path "$payloadDir\Bridge", "$payloadDir\AddIn", "$payloadDir\config", "$payloadDir\notices" -Force | Out-Null
+
+    Invoke-Dotnet @("publish", "$Root\src\TiaAgent.Bridge\TiaAgent.Bridge.csproj", "--configuration", $Configuration, "--output", "$payloadDir\Bridge", "--no-restore")
+    Get-ChildItem "$payloadDir\Bridge" -Filter "Siemens.*.dll" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+
+    $addInPath = Join-Path $ArtifactsDir "TiaAgent-$ProductVersion.addin"
+    if (-not (Test-Path $addInPath)) {
+        throw "Add-In artifact not found: $addInPath"
+    }
+    Copy-Item $addInPath "$payloadDir\AddIn\" -Force
+
+    Copy-Item "$Root\config\*" "$payloadDir\config\" -Recurse -Force
+    Copy-Item "$Root\THIRD_PARTY_NOTICES.md" "$payloadDir\notices\" -Force
+    Copy-Item "$Root\LICENSE" "$payloadDir\notices\" -Force
+
+    New-PayloadManifest -PayloadDir $payloadDir
+
+    Get-ChildItem $ArtifactsDir -Filter "TiaAgent.Cli.*.nupkg" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+    Invoke-Dotnet @("pack", "$Root\src\TiaAgent.Cli\TiaAgent.Cli.csproj", "--configuration", $Configuration, "--output", $ArtifactsDir, "--no-restore")
+
+    $packagePath = Join-Path $ArtifactsDir "TiaAgent.Cli.$ProductVersion.nupkg"
+    if (-not (Test-Path $packagePath)) {
+        throw "Expected NuGet package not found: $packagePath"
+    }
+
+    Test-NuGetPayload -PackagePath $packagePath
+    Test-NuGetInstall -PackagePath $packagePath
+    Write-Ok "NuGet package created and installation-tested: $(Split-Path $packagePath -Leaf)"
+}
+
+function Invoke-PackArtifacts {
+    param([switch]$RequireSigning)
+
+    Invoke-PackAddIn -RequireSigning:$RequireSigning
+    Invoke-VerifyAddIn -RequireSigning:$RequireSigning
+    Invoke-PackNuGet
+}
+
+function Invoke-Pack {
+    Invoke-Build
+    Invoke-PackArtifacts
+}
+
+function Invoke-Release {
+    if ($ProductVersion -notmatch "^$ReleaseVersionPattern$") {
+        throw "Release requires a valid version such as 0.3.0-beta.1, 0.3.0-rc.1, or 0.3.0. Resolved: $ProductVersion"
+    }
+
+    Invoke-Clean
+    Invoke-Build
+    Invoke-Test -NoRestore
+    Invoke-PackArtifacts -RequireSigning
+    Write-Ok "Release $ProductVersion is ready in $ArtifactsDir"
+}
+
+function Invoke-InstallDev {
+    Invoke-Build
+    Invoke-PackAddIn
+    Invoke-VerifyAddIn
+    Invoke-MsBuildTarget -Target "InstallAddIn"
+    Write-Ok "Development Add-In installed"
 }
 
 function Show-Help {
@@ -378,18 +365,12 @@ function Show-Help {
     Write-Host "Usage: .\build.ps1 <command> [-Version X.Y.Z[-channel.N]]"
     Write-Host ""
     Write-Host "Commands:"
-    Write-Host "  build           Compile the solution (no packaging or installation)"
-    Write-Host "  test            Run all tests"
-    Write-Host "  pack-addin      Package the TIA Portal Add-In (.addin)"
-    Write-Host "  pack-cli        Package the CLI global tool (.nupkg)"
-    Write-Host "  pack-release    Generate release manifest, SBOM, and SHA256SUMS"
-    Write-Host "  verify-addin    Verify the .addin package contents"
-    Write-Host "  verify-release  Verify release manifest, SBOM, and SHA256SUMS"
-    Write-Host "  install-dev     Deploy the .addin to TIA Portal UserAddIns"
-    Write-Host "  all             Build, test, pack-addin, pack-cli, verify-addin, pack-release, verify-release"
-    Write-Host "  clean           Remove all build artifacts"
-    Write-Host "  mcp             Show MCP server installation instructions"
-    Write-Host "  help            Show this help message"
+    Write-Host "  build        Restore and compile the solution"
+    Write-Host "  test         Restore and run the test suite"
+    Write-Host "  pack         Build the product, package the Add-In and create the NuGet package"
+    Write-Host "  release      Clean, build, test, sign, verify and package a release"
+    Write-Host "  install-dev  Build, package and install a local Add-In"
+    Write-Host "  clean        Remove bin, obj and artifacts"
     Write-Host ""
     Write-Host "Resolved version: $ProductVersion"
 }
@@ -397,14 +378,9 @@ function Show-Help {
 switch ($Command) {
     "build" { Invoke-Build }
     "test" { Invoke-Test }
-    "pack-addin" { Invoke-PackAddIn }
-    "pack-cli" { Invoke-PackCli }
-    "pack-release" { Invoke-PackRelease }
-    "verify-addin" { Invoke-VerifyAddIn }
-    "verify-release" { Invoke-VerifyRelease }
+    "pack" { Invoke-Pack }
+    "release" { Invoke-Release }
     "install-dev" { Invoke-InstallDev }
-    "mcp" { Invoke-Mcp }
     "clean" { Invoke-Clean }
-    "all" { Invoke-Build; Invoke-Test; Invoke-PackAddIn; Invoke-PackCli; Invoke-VerifyAddIn; Invoke-PackRelease; Invoke-VerifyRelease }
     default { Show-Help }
 }

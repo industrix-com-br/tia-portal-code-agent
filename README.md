@@ -129,7 +129,7 @@ For full command reference, run `tia-agent --help`.
 .\build.ps1 build
 .\build.ps1 test
 .\build.ps1 pack
-.\build.ps1 all
+.\build.ps1 install-dev
 ```
 
 Contributors should read [AGENTS.md](AGENTS.md) and the specifications under [`docs/spec/`](docs/spec/).

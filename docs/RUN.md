@@ -8,8 +8,8 @@ Step-by-step guide for running the full system. Prerequisites are assumed instal
 cd C:\github\tia-portal-code-agent
 
 # 1. Build, test, package, install
-.\build.ps1 all
-.\build.ps1 install
+.\build.ps1 test
+.\build.ps1 install-dev
 
 # 2. Start all services with Runtime Supervisor
 .\src\runtime\Scripts\run.ps1
@@ -47,24 +47,23 @@ The default runtime is `opencode`. To change it, edit `%LOCALAPPDATA%\TiaAgent\c
 ```powershell
 cd C:\github\tia-portal-code-agent
 
-# Full build + test + package
-.\build.ps1 all
+# Build and test
+.\build.ps1 build
+.\build.ps1 test
 
-# Or step by step
-.\build.ps1 build      # Compile (Release)
-.\build.ps1 test       # Run unit + architecture tests
-.\build.ps1 pack       # Generate .addin OPC package
+# Package Add-In, payload, and NuGet tool
+.\build.ps1 pack
 ```
 
 Expected output:
 - Build: 0 errors
 - Tests: All tests passed
-- Pack: `artifacts\TiaAgent-0-1-0.addin` created
+- Pack: `artifacts\TiaAgent-0.0.0-dev.addin` and `TiaAgent.Cli.0.0.0-dev.nupkg` created
 
 ## Step 2: Install the Add-In
 
 ```powershell
-.\build.ps1 install
+.\build.ps1 install-dev
 ```
 
 This copies the `.addin` file to:

@@ -4,16 +4,23 @@
     <TiaPublicApiDir Condition="'$(TiaPublicApiDir)' == ''">$(ProgramFiles)\Siemens\Automation\Portal V21\PublicAPI\V21\net48</TiaPublicApiDir>
     <TiaAddInApiDir Condition="'$(TiaAddInApiDir)' == ''">$(TiaPublicApiDir)</TiaAddInApiDir>
 
-    <!-- One authoritative product version. Release builds pass /p:Version=X.Y.Z[-prerelease]. -->
+    <!-- The product version is supplied by build.ps1 from the Git tag. -->
     <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
-    <PackageVersion>$(Version)</PackageVersion>
-    <ProductVersion>$(Version)</ProductVersion>
-    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">0.0.0.0</AssemblyVersion>
-    <FileVersion Condition="'$(FileVersion)' == ''">0.0.0.0</FileVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">$(Version)</ProductVersion>
+
+    <!-- CLR assembly and Windows file versions must be numeric. -->
+    <VersionCore Condition="'$(VersionCore)' == ''">$([System.Text.RegularExpressions.Regex]::Match('$(Version)', '^\d+\.\d+\.\d+').Value)</VersionCore>
+    <VersionCore Condition="'$(VersionCore)' == ''">0.0.0</VersionCore>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(VersionCore).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(VersionCore).0</FileVersion>
+
     <SourceRevisionId Condition="'$(SourceRevisionId)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</SourceRevisionId>
     <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
-    <!-- Source Link appends SourceRevisionId automatically; do not duplicate it here. -->
+    <ShortSourceRevisionId Condition="'$(SourceRevisionId)' != 'unknown'">$([System.Text.RegularExpressions.Regex]::Match('$(SourceRevisionId)', '^[0-9a-fA-F]{7}').Value)</ShortSourceRevisionId>
+    <InformationalVersion Condition="'$(InformationalVersion)' == '' and '$(ShortSourceRevisionId)' != ''">$(Version)+sha.$(ShortSourceRevisionId)</InformationalVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RepositoryCommit>$(SourceRevisionId)</RepositoryCommit>
 
     <LangVersion>latest</LangVersion>
@@ -24,12 +31,10 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <NoWarn>$(NoWarn);NU1603;CA1707;CA1304;CA1305;CA1310;CA1311;CA1822;CA1848</NoWarn>
 
-    <!-- Enable NuGet package lock files and enforce locked restore in CI -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 
-  <!-- Detect Siemens assemblies early so csproj conditionals can use this -->
   <PropertyGroup>
     <SiemensAssembliesExist Condition="Exists('$(TiaPublicApiDir)\Siemens.Engineering.Base.dll')">true</SiemensAssembliesExist>
     <SiemensAssembliesExist Condition="'$(SiemensAssembliesExist)' == ''">false</SiemensAssembliesExist>
