@@ -35,19 +35,7 @@ jobs:
         run: dotnet restore TiaAgent.sln
 
       - name: Test
-        id: test
-        shell: pwsh
-        run: |
-          dotnet test TiaAgent.sln --configuration Release --no-restore *> test.log
-          exit $LASTEXITCODE
-
-      - name: Upload failing test log
-        if: failure() && steps.test.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: failing-test-log
-          path: test.log
-          if-no-files-found: error
+        run: dotnet test TiaAgent.sln --configuration Release --no-restore
 
   publish:
     name: Publish NuGet
