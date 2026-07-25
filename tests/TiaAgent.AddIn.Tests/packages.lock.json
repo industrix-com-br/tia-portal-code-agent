@@ -112,7 +112,7 @@
       "tiaagent.addin": {
         "type": "Project",
         "dependencies": {
-          "TiaAgent.Contracts": "[0.0.0-dev, )"
+          "TiaAgent.Contracts": "[0.2.2-alpha.1, )"
         }
       },
       "tiaagent.contracts": {
