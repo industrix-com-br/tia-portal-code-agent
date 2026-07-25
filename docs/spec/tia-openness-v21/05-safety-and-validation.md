@@ -1,6 +1,6 @@
 # TIA Portal V21 Safety and Safety Validation API
 
-## 1. Scope and policy
+## Scope and product policy
 
 Safety APIs are exposed through:
 
@@ -8,13 +8,13 @@ Safety APIs are exposed through:
 - `Siemens.Engineering.SafetyValidation`;
 - `Siemens.Engineering.AddIn.Safety`.
 
-This domain includes configuration and validation of safety-related engineering data. It is not an ordinary CRUD surface.
+This file is an API reference. TIA Portal Code Agent does not currently expose Safety tools, Safety compile extensions, Safety mutation, or Safety download. Safety project content may be explained or reviewed only when it is available through a supported read-oriented selection or external MCP context.
 
-**Project default:** Safety data is read-only for autonomous agents. Any mutation requires a dedicated capability, explicit user confirmation and domain-specific validation.
+Safety data is not an ordinary CRUD surface. No model-generated text can authorize a Safety operation.
 
-## 2. Safety engineering model
+## Safety engineering model
 
-Key `Siemens.Engineering.Safety` types include:
+Important V21 types include:
 
 - `SafetyAdministration`;
 - `SafetySettings` and `GlobalSettings`;
@@ -24,24 +24,15 @@ Key `Siemens.Engineering.Safety` types include:
 - `SafetyPrintout` and print options;
 - Safety-specific download configurations.
 
-`AssignmentOfBlockNumbers` exposes configuration for system-generated safety block ranges, including FB, FC and DB ranges and management mode.
+Block-range and settings changes can affect generated blocks, signatures, compile results, and project consistency. They must not be exposed through generic attribute setters.
 
-Changing these values can affect generated blocks and project consistency. Such changes MUST NOT be exposed through a generic attribute setter.
+## Signatures and traceability
 
-## 3. Signatures and traceability
+Safety signature information can include signature type, value, scope, system version, and state metadata. A signature is engineering evidence, not a simple status flag.
 
-Safety signature types and providers allow access to safety signature information. A read tool SHOULD return:
+Read-oriented output must preserve scope and freshness and must not imply that a signature was validated when it was merely read.
 
-- signature type;
-- relevant identifier/value;
-- scope;
-- creation or update metadata when available;
-- current safety system version;
-- whether the project state changed after the signature snapshot.
-
-A safety signature is evidence, not merely a status flag. Preserve it in audit records associated with compile, validation and approved changes.
-
-## 4. Safety compile Add-In workflow
+## Safety compile Add-In workflow API
 
 `Siemens.Engineering.AddIn.Safety` provides a workflow extension chain:
 
@@ -50,96 +41,77 @@ SafetyCompileAddInProvider
   -> SafetyCompileWorkflowAddIn
     -> SafetyCompileWorkflowSupport
       -> SafetyCompileWorkflowItem
-        -> Execute(objects, SafetyCompileContext)
-        -> Rollback(...)
+        -> Execute / Rollback
 ```
 
-The workflow support has initialize/dispose hooks for resources shared during a workflow session.
+The current Add-In does not register these providers or execute an LLM inside a Safety compile workflow.
 
-Rules:
+Any future workflow extension must be deterministic, use bounded external communication, surface cancellation, and report partial rollback or validation failure explicitly.
 
-- `Execute` MUST be deterministic for the same input and external state.
-- External communication MUST use bounded timeouts.
-- Rollback MUST not hide partial failure.
-- Workflow results MUST include explicit success/failure state and diagnostic context.
-- Do not invoke an LLM inside a compile-critical workflow item.
-
-## 5. Safety Validation model
+## Safety Validation model
 
 `Siemens.Engineering.SafetyValidation` includes:
 
 - `SafetyValidationAssistant`;
-- `ActivationTest` and composition;
-- `SafetyFunction` and composition;
+- activation tests and safety functions;
 - conditions and condition values;
 - device queries;
 - trace configuration;
-- validation results and test state/validity enums;
+- validation results and state enums;
 - activation-test import and printout support.
 
-`ActivationTest` exposes properties such as:
+Availability depends on the installed product, licensing, project configuration, and current state. Returned data must be converted to bounded serializable snapshots.
 
-- author;
-- evaluation device name;
-- name;
-- overall state;
-- safety functions;
-- available devices.
+## Current product boundary
 
-Validation operations SHOULD return a structured snapshot rather than raw Siemens objects.
+Potential API capabilities such as reading settings, signatures, runtime groups, or activation tests are not documented as supported commands until they are implemented and validated end-to-end.
 
-## 6. Allowed agent capabilities
+Explicitly unsupported product behavior includes:
 
-Read-only capabilities:
+- updating Safety settings;
+- changing Safety block ranges;
+- importing activation tests;
+- registering or executing Safety compile extensions;
+- mutating Safety programs;
+- downloading Safety programs.
 
-```text
-tia_get_safety_overview
-tia_get_safety_settings
-tia_list_safety_runtime_groups
-tia_get_safety_signatures
-tia_list_activation_tests
-tia_get_activation_test
-tia_validate_safety_test_configuration
-```
+## Requirements before any future Safety operation
 
-Restricted capabilities:
+A future Safety-related write or deployment workflow would require all of the following:
 
-```text
-tia_update_safety_settings
-tia_import_activation_test
-tia_execute_safety_compile_extension
-tia_change_safety_block_ranges
-tia_download_safety_program
-```
-
-Restricted capabilities MUST be disabled unless the deployment explicitly enables them.
-
-## 7. Mandatory controls for Safety mutation
-
-A Safety mutation requires all of the following:
-
-1. authenticated user with Safety-specific permission;
-2. selected project and device confirmed in the UI;
-3. immutable before-state snapshot;
-4. explicit change plan and diff;
-5. explicit approval token;
-6. exclusive access and transaction where supported;
-7. Safety compile/validation;
-8. signature/state comparison;
-9. audit record containing user, time, project, device, change and result;
+1. Safety-specific authorization;
+2. explicit project and device confirmation outside model text;
+3. immutable before-state and signature evidence;
+4. deterministic change preview and impact analysis;
+5. short-lived, single-use approval;
+6. stale-state validation and appropriate exclusive access;
+7. Safety compile and validation evidence;
+8. signature comparison;
+9. complete audit records;
 10. no automatic download.
 
-## 8. Error handling
+These are design requirements, not implemented features.
 
-Safety errors MUST preserve the original Siemens exception and workflow/validation messages. A generic "operation failed" message is insufficient for engineering review.
+## Error handling
 
-The system MUST distinguish:
+Safety diagnostics must distinguish:
 
 - API capability unavailable;
 - project not configured for Safety;
-- permission/trust failure;
-- validation failure;
-- compile failure;
-- stale state/concurrency conflict;
+- permission or trust failure;
+- validation or compile failure;
+- stale state;
 - external workflow failure;
 - user cancellation.
+
+Do not reduce Safety failures to a generic success/failure message.
+
+## Validation sources
+
+Before documenting any Safety capability as supported:
+
+- verify the symbol against the installed V21 Safety assemblies;
+- validate licensing and project prerequisites;
+- run the workflow in a controlled Safety environment;
+- review permissions and failure behavior;
+- obtain a separate safety and security review.
