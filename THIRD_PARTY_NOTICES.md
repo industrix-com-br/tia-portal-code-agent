@@ -10,6 +10,6 @@ icon by
 
 Repository asset:
 
-`assets/images/icons8-ai-48.png`
+`src/TiaAgent.AddIn/Resources/icons8-ai-48.png`
 
 This asset remains subject to the applicable Icons8 license and terms.
