@@ -1,344 +1,207 @@
 # Troubleshooting Guide
 
-Common errors, diagnostic commands, and resolution steps for TIA Portal Code Agent.
+Use the CLI diagnostics first, then inspect the component logs associated with the failure.
 
 > [!CAUTION]
-> This project is experimental and not ready for production use. Do not use it on live systems, safety programs, or workflows where an incorrect response or modification could affect people, equipment, availability, or compliance.
+> This project is experimental and is not ready for production use.
 
 ## Diagnostic commands
 
-### Environment health check
-
 ```powershell
 tia-agent doctor
-```
-
-Runs environment and setup diagnostics covering platform, layout, manifests, update channel, Siemens integration, runtimes, and MCP server. Use `--verbose` for detailed recommendations.
-
-### Runtime status
-
-```powershell
+tia-agent doctor --verbose
 tia-agent status
-```
-
-Shows the current state of runtime services (Bridge, agent runtime) and health information.
-
-### Runtime-specific diagnostics
-
-```powershell
 tia-agent runtime doctor
 tia-agent runtime doctor claude
+tia-agent version --verbose
 ```
 
-Runs diagnostic checks for all registered runtimes or a specific runtime, including executable availability, version policy, and MCP integration.
+Use `tia-agent version --verbose` to list installed payload versions. There is no separate `tia-agent versions` command.
 
-### Version information
+## Log locations
+
+| Component | Path |
+|---|---|
+| Add-In | `%LOCALAPPDATA%\TiaAgent\logs\addin-YYYYMMDD.log` |
+| Bridge | `%LOCALAPPDATA%\TiaAgent\logs\bridge.log` |
+| Runtime Supervisor | `%LOCALAPPDATA%\TiaAgent\logs\supervisor.log` |
+| OpenCode server, when used | `%LOCALAPPDATA%\TiaAgent\logs\opencode.log` |
+
+Examples:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\addin-$(Get-Date -Format yyyyMMdd).log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\bridge.log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\supervisor.log" -Tail 100
+```
+
+## Payload validation failed
+
+The CLI could not validate the payload manifest, hashes, or required files.
+
+```powershell
+tia-agent doctor --verbose
+tia-agent install --force
+```
+
+When the bundled payload itself is incorrect, reinstall the CLI package:
+
+```powershell
+dotnet tool uninstall --global TiaAgent.Cli
+dotnet tool install --global TiaAgent.Cli
+tia-agent install
+```
+
+## Requested version is not installed
+
+Inspect the installed payloads:
 
 ```powershell
 tia-agent version --verbose
 ```
 
-Shows CLI product version, active version, configuration path, OS environment, and .NET framework.
-
-### Installed versions
+Install the CLI package containing the required version, then install its payload:
 
 ```powershell
-tia-agent versions
-```
-
-Lists all installed versions, the active version, rollback candidate, and update channel.
-
-## Common errors and solutions
-
-### "Payload validation failed"
-
-The bundled payload is missing or corrupted.
-
-**Diagnostic:**
-```powershell
-tia-agent doctor
-```
-
-**Solution:**
-```powershell
-tia-agent install --force
-```
-
-If the problem persists, reinstall the CLI tool:
-```powershell
-dotnet tool uninstall --global Industrix.TiaAgent.Cli
-dotnet tool install --global Industrix.TiaAgent.Cli
+dotnet tool update --global TiaAgent.Cli --version <version>
 tia-agent install
 ```
 
-### "No previous version available for rollback"
+## No previous version is available
 
-No rollback candidate exists. This happens when only one version is installed.
+Rollback requires at least two installed payload versions or a valid `previousVersion` entry. Install the desired CLI package and payload before retrying rollback.
 
-**Diagnostic:**
+## Add-In was not deployed automatically
+
+`tia-agent install` reports the unpacked Add-In path when TIA Portal V21 or its UserAddIns directory cannot be resolved.
+
+Check:
+
 ```powershell
-tia-agent versions
+tia-agent doctor --verbose
 ```
 
-**Solution:** Install a second version to enable rollback, or perform a clean reinstall of the desired version.
+The normal deployment directory is:
 
-### "Version '<ver>' is not installed"
-
-The requested version does not exist in the local installation registry.
-
-**Diagnostic:**
-```powershell
-tia-agent versions
+```text
+%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\
 ```
 
-**Solution:** Install the version first:
+A custom directory can be supplied during installation:
+
 ```powershell
-dotnet tool install --global Industrix.TiaAgent.Cli --version <ver>
-tia-agent install
+tia-agent install --user-addins-dir C:\path\to\UserAddIns
 ```
 
-### "Version '<ver>' (channel: X) is not compatible with the configured update channel '<channel>'"
+TIA Portal discovery checks, in order:
 
-The target version belongs to a different channel than configured.
+1. `--user-addins-dir`;
+2. the `TiaPublicApiDir` environment variable;
+3. `C:\Program Files\Siemens\Automation\Portal V21`;
+4. an existing UserAddIns directory under `%APPDATA%`.
 
-**Solution:** Either change the channel or use `--force`:
+Restart TIA Portal after deployment.
+
+## Add-In does not appear in TIA Portal
+
+1. Confirm a `.addin` file exists under the UserAddIns directory.
+2. Restart TIA Portal completely.
+3. Open **Options > Settings > Add-Ins** and enable **TIA Portal Code Agent**.
+4. Inspect the dated Add-In log.
+5. Run `tia-agent doctor --verbose`.
+
+## WPF window falls back to MessageBox
+
+The Add-In attempts to create its WPF result window and falls back to a MessageBox when UI creation fails.
+
+Search the dated Add-In log for WPF and fallback messages:
+
 ```powershell
-tia-agent channel set <channel>
-tia-agent update --version <ver>
+Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\addin-$(Get-Date -Format yyyyMMdd).log" |
+  Select-String "WPF|MessageBox|fallback"
 ```
 
-Or force the update:
-```powershell
-tia-agent update --version <ver> --force
-```
+Common causes include an old Add-In artifact, TIA Portal not being restarted after deployment, missing package permissions, or an assembly-loading failure.
 
-### "The local TIA Agent Bridge is not running"
+## Bridge is not running
 
-The Bridge service is not started.
-
-**Solution:**
 ```powershell
 tia-agent start
+tia-agent status
 ```
 
-If already running, check for port conflicts:
+The default Bridge port is `43119`, but the supervisor can allocate another port from its configured range. The Add-In discovers the active port through `%LOCALAPPDATA%\TiaAgent\runtime\runtime.json`; do not assume that the default port is always active.
+
+## Port conflict
+
 ```powershell
 netstat -ano | Select-String ":43119"
 ```
 
-### "Unknown runtime '<id>'"
+Stop the conflicting process or restart the supervisor so it can allocate an available port.
 
-An invalid runtime identifier was specified.
+## Runtime is unknown or unavailable
 
-**Solution:** Check available runtimes:
 ```powershell
 tia-agent runtime list
-```
-
-Valid runtime IDs: `opencode`, `mimo`, `claude`.
-
-### "Selected runtime '<id>' is unavailable"
-
-The configured runtime executable is not found on PATH.
-
-**Diagnostic:**
-```powershell
 tia-agent runtime doctor
+tia-agent runtime use claude --mode cli
 ```
 
-**Solution:** Install the runtime CLI or update the executable path in `%LOCALAPPDATA%\TiaAgent\config.json`:
-```powershell
-tia-agent config set runtimes.<id>.executable <path>
-```
-
-### "Port 43119 already in use"
-
-Another process is using the Bridge port.
-
-**Diagnostic:**
-```powershell
-netstat -ano | Select-String ":43119"
-```
-
-**Solution:** Kill the conflicting process, or let the Runtime Supervisor allocate an alternative port from the configured range (43100-43200).
-
-## Log locations
-
-| Log | Path | Contents |
-|---|---|---|
-| Supervisor log | `%LOCALAPPDATA%\TiaAgent\logs\supervisor.log` | Startup, shutdown, health checks, errors |
-| Bridge log | `%LOCALAPPDATA%\TiaAgent\logs\bridge.log` | Task lifecycle, runtime calls, errors |
-| Add-In log | `%LOCALAPPDATA%\TiaAgent\logs\addin-YYYYMMDD.log` | UI lifecycle, WPF creation, permissions, assembly loads |
-
-View logs:
+Supported runtime IDs are `opencode`, `mimo`, and `claude`. An executable path can be configured explicitly:
 
 ```powershell
-Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\supervisor.log" -Tail 50
-Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\bridge.log" -Tail 50
-Get-Content "$env:LOCALAPPDATA\TiaAgent\addin.log" -Tail 50
+tia-agent config set runtimes.claude.executable C:\tools\claude.cmd
 ```
 
-## WPF UI issues
+The Bridge does not silently switch to another runtime when the selected runtime fails.
 
-### WPF window does not open (falls back to MessageBox)
+## OpenCode server is unhealthy
 
-The Add-In attempts to create a WPF `Window` first, then falls back to `MessageBox` if it fails.
+When OpenCode uses server mode:
 
-**Diagnostic:**
 ```powershell
-Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\addin-$(Get-Date -Format yyyyMMdd).log" | Select-String "WPF"
+opencode --version
+netstat -ano | Select-String ":43120"
+Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\opencode.log" -Tail 100
 ```
 
-Look for:
-- `Creating diagnostic WPF window.` — the attempt was made
-- `WPF window creation failed.` — the permission was denied or assemblies are missing
-- `Falling back to MessageBox` — WPF is unavailable, using Win32 fallback
+Switch to CLI mode only when the installed OpenCode version supports it:
 
-**Common causes:**
-1. **Missing `UIPermission`** in the `.addin` package — rebuild and reinstall:
-   ```powershell
-   ./build.ps1 install-dev
-   ```
-2. **TIA Portal cache** — close TIA Portal completely and reopen.
-3. **Old `.addin` version** — check installed file date vs generated artifact.
+```powershell
+tia-agent runtime use opencode --mode cli
+```
 
-### WPF window opens behind TIA Portal
-
-The diagnostic window uses `Topmost = true` and `WindowStartupLocation = CenterScreen` to prevent this. If the window still appears behind TIA Portal:
-
-1. Check the log for `Topmost` setting.
-2. Try Alt+Tab to find the window.
-3. Check if another application has captured focus.
-
-### Logging shows "WPF assembly not loaded"
-
-The Add-In logs all WPF assembly loads at startup. If `PresentationFramework`, `PresentationCore`, or `WindowsBase` fail to load:
-
-1. Ensure .NET Framework 4.8 is installed.
-2. Check for assembly version conflicts in the GAC.
-3. Verify the Add-In package contains the correct framework references.
-
-## TIA Portal integration issues
-
-### Add-In not showing in TIA Portal
-
-1. Ensure TIA Portal was restarted after installation.
-2. Check that `.addin` files exist in `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\`.
-3. Check the Add-In log: `%LOCALAPPDATA%\TiaAgent\addin.log`.
-4. Run diagnostics:
-   ```powershell
-   tia-agent doctor
-   ```
-
-### tia-mcp fails to connect to TIA Portal
+## TiaMcpServer cannot access TIA Portal
 
 ```powershell
 tia-mcp doctor
 ```
 
-Common causes:
-- TIA Portal is not open.
-- No project is loaded.
-- User is not in the `Siemens TIA Openness` group.
-- TIA Portal version mismatch (must be V21).
+Check that:
 
-### TIA Portal V21 not found
+- TIA Portal V21 is installed and running;
+- a project is open;
+- the Windows user belongs to `Siemens TIA Openness`;
+- the configured Public API path belongs to V21.
 
-```
-TIA Portal V21 not found at 'C:\Program Files\Siemens\Automation\Portal V21'
-```
-
-Install TIA Portal V21 or set the `TiaPublicApiDir` environment variable to point to the correct installation.
-
-## Runtime-specific issues
-
-### Runtime not responding
-
-```powershell
-# Check Bridge health (includes runtime info)
-Invoke-RestMethod -Uri "http://127.0.0.1:43119/health"
-```
-
-If unhealthy, restart services:
-```powershell
-tia-agent stop
-tia-agent start
-```
-
-### Silent fallback is disabled
-
-The Bridge does **not** automatically switch to another runtime when the selected runtime fails. You must explicitly configure the desired runtime:
-
-```powershell
-tia-agent runtime use <runtime-id>
-```
-
-Or set the environment variable for the current session:
-```powershell
-$env:TIA_AGENT_RUNTIME = "claude"
-```
-
-### OpenCode server health check failed
-
-If using OpenCode in server mode:
-1. Verify the server is installed: `opencode --version`
-2. Check the port is not in use: `netstat -ano | Select-String ":43120"`
-3. Check server logs: `%LOCALAPPDATA%\TiaAgent\logs\opencode.log`
-
-## Permission issues
-
-### User not in Siemens TIA Openness group
-
-```powershell
-whoami /groups | Select-String "Siemens TIA Openness"
-```
-
-If missing, ask your Windows administrator to add your account to the `Siemens TIA Openness` local group.
-
-### Manifest file locked or corrupted
-
-If a manifest file (`current.json`, `installations.json`) is corrupted:
-
-```powershell
-tia-agent doctor
-```
-
-If `doctor` reports a malformed manifest, reinstall:
-```powershell
-tia-agent install --force
-```
-
-## Network and connectivity issues
-
-All TIA Agent services bind to `127.0.0.1` (loopback) only. They are not accessible from the network.
-
-If the Bridge cannot be reached:
-1. Verify it is running: `tia-agent status`
-2. Check the port: `netstat -ano | Select-String ":43119"`
-3. Verify no firewall is blocking local loopback traffic.
-
-## Data and configuration
-
-### Configuration file location
+## Configuration recovery
 
 ```powershell
 tia-agent config path
-```
-
-### Reset configuration
-
-```powershell
+tia-agent config list
 tia-agent config reset
 ```
 
-### View current configuration
+`config reset` restores the default runtime configuration. It does not remove installed payload versions.
+
+## Manifest corruption
+
+The installation state is stored in `current.json` and `installations.json` under `%LOCALAPPDATA%\TiaAgent`.
 
 ```powershell
-tia-agent config list
+tia-agent doctor --verbose
+tia-agent install --force
 ```
 
-## Getting further help
-
-1. Run `tia-agent doctor --verbose` and review all recommendations.
-2. Check the log files listed above.
-3. Review the architecture documentation in [RUN.md](RUN.md) and [RUNTIME.md](RUNTIME.md).
+See [LAYOUT.md](LAYOUT.md) for the complete installed layout and [CLI.md](CLI.md) for verified command syntax.
