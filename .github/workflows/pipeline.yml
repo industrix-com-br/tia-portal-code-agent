@@ -35,7 +35,14 @@ jobs:
         run: dotnet restore TiaAgent.sln
 
       - name: Test
-        run: dotnet test TiaAgent.sln --configuration Release --no-restore
+        shell: pwsh
+        run: |
+          dotnet test TiaAgent.sln --configuration Release --no-restore *> test.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            Get-Content test.log | Select-Object -Last 100
+            exit $exitCode
+          }
 
   publish:
     name: Publish NuGet
