@@ -1,154 +1,134 @@
-# Installed Filesystem Layout & Manifest Schemas
+# Installed Filesystem Layout
 
-This document defines the persistent installation layout and manifest schemas used by `tia-agent` CLI independently of the Git repository checkout.
+`TiaAgent.Cli` stores payload and runtime state independently of the Git repository checkout.
 
-## Overview & Objectives
+## Installation root
 
-1. **Independent Execution:** The CLI operates against a persistent `%LOCALAPPDATA%\TiaAgent` directory.
-2. **Deterministic Manifests:** System state, active versions, and installed artifacts are tracked via versioned JSON manifests.
-3. **Atomic Persistence:** All manifest writes use temporary file creation followed by atomic replacement to prevent corruption during unexpected shutdowns or process interruptions.
-
----
-
-## Filesystem Layout
-
-The standard root path is `%LOCALAPPDATA%\TiaAgent`.
+Default root:
 
 ```text
 %LOCALAPPDATA%\TiaAgent\
-├── config.json              # Top-level user configuration (default runtime, overrides)
-├── current.json             # Pointer to active version (CurrentManifest)
-├── installations.json       # Index of installed versions and metadata (InstallationsManifest)
-├── versions\                # Side-by-side version storage
-│   ├── 0.2.0-beta.1\        # Specific version binaries (Bridge, AddIn, CLI)
-│   └── 0.2.0-rc.1\
-├── logs\                    # Log files for Bridge, AddIn, and CLI
-├── runtime\                 # Active runtime supervisor state, pid files, and locks
-└── cache\                   # Downloaded artifacts and temporary packages
 ```
 
-### Directory Roles
+Layout:
 
-- **`versions/`**: Stores unpacked version payloads side-by-side for zero-downtime activation and rollback.
-- **`logs/`**: Centralized log directory across all TIA Agent components.
-- **`runtime/`**: Transient runtime process state, PID files, and inter-process mutex locks.
-- **`cache/`**: Temporary storage for downloaded packages before verification and installation.
+```text
+%LOCALAPPDATA%\TiaAgent\
+├── config.json
+├── current.json
+├── installations.json
+├── versions\
+│   └── <product-version>\
+│       ├── payload-manifest.json
+│       ├── Bridge\
+│       ├── AddIn\
+│       ├── config\
+│       └── notices\
+├── logs\
+├── runtime\
+└── cache\
+```
 
----
+The .NET global tool executable is managed by `dotnet tool` and is not copied into each payload version directory.
 
-## Manifest Schemas
+## Files
 
-### 1. `current.json` (`CurrentManifest`)
+### `config.json`
 
-Tracks the currently active version.
+User configuration for:
+
+- default runtime;
+- update channel;
+- per-runtime enabled state, executable, mode, server URL, and environment values.
+
+See [RUNTIME.md](RUNTIME.md).
+
+### `current.json`
+
+Pointer to the active payload version:
 
 ```json
 {
   "schemaVersion": 1,
-  "activeVersion": "0.2.0-rc.1",
+  "activeVersion": "0.3.0-beta.1",
   "previousVersion": "0.2.0-beta.1",
-  "activatedAt": "2026-07-22T21:00:00.0000000+00:00",
-  "activatedBy": "tia-agent CLI"
+  "activatedAt": "2026-07-25T20:00:00+00:00",
+  "activatedBy": "tia-agent install"
 }
 ```
 
-### 2. `installations.json` (`InstallationsManifest`)
+### `installations.json`
 
-Catalog of all installed versions and component artifact checksums.
+Registry of installed payload versions, installation timestamps, commit metadata, and component hashes.
 
-```json
-{
-  "schemaVersion": 1,
-  "versions": {
-    "0.2.0-beta.1": {
-      "version": "0.2.0-beta.1",
-      "installedAt": "2026-07-22T20:00:00.0000000+00:00",
-      "commitSha": "af09cc0",
-      "components": {
-        "bridge": {
-          "relativePath": "Bridge/TiaAgent.Bridge.dll",
-          "sha256Hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-          "sizeBytes": 1048576
-        }
-      }
-    }
-  }
-}
+### `versions\<version>\`
+
+A complete copy of the validated payload embedded in the CLI package or supplied through `--payload-dir`.
+
+### `logs\`
+
+Current log files include:
+
+```text
+addin-YYYYMMDD.log
+bridge.log
+supervisor.log
+opencode.log        # when OpenCode server mode is used
 ```
 
----
+### `runtime\`
 
-## Atomic Write Strategy
+Transient service state, including:
 
-Manifest updates are performed via `ManifestStore.WriteAtomic<T>(filePath, data)`:
+- `runtime.json` discovery manifest;
+- process and lock files;
+- transient Bridge credentials under `runtime\secrets\`.
 
-1. Data is serialized to a unique temporary file (`filePath.tmp.<guid>`).
-2. The file stream is flushed and closed.
-3. The temporary file replaces the target file atomically via `File.Move(tempPath, targetPath, overwrite: true)`.
-4. If an exception occurs, temporary files are automatically cleaned up.
+The runtime manifest is not proof that a process is still healthy.
 
-If a manifest file is missing, `ManifestStore.Read<T>` returns a default instance. If corrupted or empty, an `InvalidDataException` is raised with actionable diagnostic context.
+### `cache\`
 
----
+Reserved for downloaded or temporary installation artifacts.
 
-## CLI Tool Package Bundling & Payload Layout
+## TIA Portal deployment
 
-The `TiaAgent.Cli` global tool package (.nupkg) is self-contained and includes all project-owned assets necessary for standalone installation without requiring repository cloning or local compilation.
+The active Add-In artifact is deployed separately to:
 
-### Package Payload Layout (`tools/net8.0/any/payload/`)
+```text
+%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\
+```
 
-Inside the NuGet package, assets are stored deterministically under `payload/`:
+When automatic deployment is unavailable, `tia-agent install` reports the unpacked `.addin` path under the version directory.
+
+## NuGet package payload
+
+The `TiaAgent.Cli` package embeds:
 
 ```text
 tools/net8.0/any/payload/
-├── payload-manifest.json       # Canonical manifest of bundled contents, hashes, and version alignment
-├── Bridge/                     # Published Bridge binaries (TiaAgent.Bridge.dll, etc.)
-├── AddIn/                      # Versioned TIA Portal Add-In artifact (TiaAgent-<version>.addin)
-├── config/                     # Default configuration templates (settings.example.json, bridge.example.json, opencode.example.json)
-└── notices/                    # Third-party notices and license (THIRD_PARTY_NOTICES.md, LICENSE)
+├── payload-manifest.json
+├── Bridge\
+├── AddIn\
+├── config\
+└── notices\
 ```
 
-### `payload-manifest.json` (`PayloadManifest`)
+Required package entries are validated by `build.ps1` and architecture tests.
 
-Manifest schema generated at pack time and verified during extraction:
+`payload-manifest.json` records:
 
-```json
-{
-  "schemaVersion": 1,
-  "productVersion": "0.2.0-beta.1",
-  "commitSha": "64ec9ba",
-  "builtAt": "2026-07-22T21:00:00.0000000+00:00",
-  "compatibility": {
-    "tiaPortalVersion": "V21",
-    "opennessVersion": "V21",
-    "targetFramework": "net8.0"
-  },
-  "components": {
-    "bridge": {
-      "relativePath": "Bridge/TiaAgent.Bridge.dll",
-      "version": "0.2.0-beta.1",
-      "sha256Hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 1048576
-    },
-    "addin": {
-      "relativePath": "AddIn/TiaAgent-0.2.0-beta.1.addin",
-      "version": "0.2.0-beta.1",
-      "sha256Hash": "a1b2c3d4...",
-      "sizeBytes": 524288
-    }
-  },
-  "files": [
-    {
-      "relativePath": "Bridge/TiaAgent.Bridge.dll",
-      "sha256Hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 1048576
-    }
-  ]
-}
-```
+- schema version;
+- product version;
+- source commit;
+- build timestamp;
+- V21 compatibility metadata;
+- Bridge and Add-In artifact metadata;
+- per-file hashes and sizes.
 
-### Licensing & Siemens Assembly Boundaries
+## Persistence behavior
 
-- **Proprietary Siemens Binaries Excluded:** Siemens TIA Portal runtime assemblies (e.g. `Siemens.Engineering.dll`, `Siemens.Engineering.AddIn.dll`) are host-provided by Siemens TIA Portal installations and MUST NEVER be redistributed in the CLI package or stored in source control.
-- **Verification Enforcement:** `PayloadValidator` and build verification targets automatically scan payload directories and reject packages if any `Siemens.*` assembly is present.
-- **Licensing Compliance:** Project-owned binaries, notices, and default configs are licensed under the repository license (`LICENSE`) and third-party notices (`THIRD_PARTY_NOTICES.md`).
+Manifests are written through `ManifestStore.WriteAtomic`. Writes use a temporary file followed by replacement of the destination file. Corrupt manifests are reported by diagnostics or handled by command-specific recovery logic.
+
+## Siemens assembly boundary
+
+The payload must not contain `Siemens.*` runtime assemblies. Those assemblies are supplied by the installed TIA Portal V21 environment and remain subject to Siemens licensing.
