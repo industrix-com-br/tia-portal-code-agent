@@ -25,38 +25,42 @@ jobs:
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
 
-      - name: Apply repository formatting
-        id: format
+      - name: Restore solution
+        id: restore
         continue-on-error: true
         shell: pwsh
         run: |
-          dotnet format TiaAgent.sln 2>&1 | Tee-Object -FilePath format.log
+          dotnet restore TiaAgent.sln --locked-mode --verbosity normal 2>&1 | Tee-Object -FilePath restore.log
           exit $LASTEXITCODE
 
-      - name: Publish formatter failure
-        if: steps.format.outcome == 'failure'
+      - name: Publish restore failure
+        if: steps.restore.outcome == 'failure'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          $log = Get-Content -LiteralPath format.log -Raw
+          $log = Get-Content -LiteralPath restore.log -Raw
           if ($log.Length -gt 60000) {
             $log = $log.Substring($log.Length - 60000)
           }
-          $body = @"
-          Formatter diagnostic from temporary workflow:
-
-          ````text
-          $log
-          ````
-          "@
-          $body | Set-Content -LiteralPath formatter-comment.md -Encoding UTF8
-          gh pr comment $env:PR_NUMBER --body-file formatter-comment.md
+          @(
+            'Restore diagnostic from temporary workflow:',
+            '',
+            '~~~text',
+            $log,
+            '~~~'
+          ) | Set-Content -LiteralPath restore-comment.md -Encoding UTF8
+          gh pr comment $env:PR_NUMBER --body-file restore-comment.md
           exit 1
 
+      - name: Apply repository formatting
+        if: steps.restore.outcome == 'success'
+        shell: pwsh
+        run: dotnet format TiaAgent.sln --no-restore
+
       - name: Commit formatting changes
-        if: steps.format.outcome == 'success'
+        if: steps.restore.outcome == 'success'
         shell: pwsh
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
