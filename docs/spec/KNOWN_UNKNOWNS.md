@@ -2,194 +2,143 @@
 
 Status: open
 
-Agents must not convert these questions into assumptions.
+This file records questions that cannot be answered safely from repository code alone. Resolved implementation facts belong in the maintained guides and specifications, not in this queue.
 
-## KU-001 - Target TIA Portal version
+## Confirmed baseline
 
-Question:
+The following items are no longer unknown:
 
-- Which exact TIA Portal version and build is the first supported target?
+- the only current TIA target is V21;
+- the Add-In targets .NET Framework 4.8;
+- the Bridge and CLI target .NET 8;
+- the Add-In uses the V21 modular Public API assemblies;
+- the context menu is implemented through `ProjectTreeAddInProvider`;
+- results use a WPF window with MessageBox fallback;
+- Mimo, OpenCode, and Claude Code are registered runtimes;
+- `TiaMcpServer` is the external MCP integration;
+- the CLI package ID is `TiaAgent.Cli`;
+- the current product workflow is read-only.
 
-Evidence required:
+## KU-001 — Exact V21 validation environment
 
-- installed version;
-- `PublicAPI` directory;
-- Add-In DLL file version;
-- Publisher file version;
-- framework requirement.
+Record the exact TIA Portal V21 update/build, Openness assembly versions, Add-In Publisher version, Windows version, and installed engineering licenses used for each public release.
 
-**Partially answered**: The Siemens Development Templates v2.0.145 support V18 and V19. V21 is not yet in the official templates but uses the same csproj pattern and `Config.xml` schema. The `Convert-AddInProject.ps1` script can upgrade from V18/V19 to later versions (forward upgrades only). The minimum supported version is V18. Target framework is `net48`.
+Evidence:
 
-## KU-002 - Exact supported selection types
+- `tia-agent doctor --verbose` output;
+- file versions from the installed V21 Public API and Publisher;
+- release-runner inventory;
+- manual validation record.
 
-Question:
+## KU-002 — Supported selection types
 
-- Which Siemens object types can be used for block-level context commands in the target version?
+Determine the exact Siemens object types for which selection snapshot and source extraction work reliably.
 
-Evidence required:
+Evidence:
 
-- installed API inspection;
-- minimal provider prototype;
-- manual context-menu test.
+- automated tests where possible;
+- a V21 sample-project matrix;
+- manual context-menu and source-extraction results.
 
-## KU-003 - Block source access
+## KU-003 — Source extraction coverage
 
-Question:
+Document which block languages and object types can be exported or read by `SelectionSnapshotFactory`, including protected blocks and unsupported objects.
 
-- Can the target block content be read directly, or must it be exported?
+Evidence:
 
-Evidence required:
+- source-extraction tests;
+- representative V21 projects;
+- logs showing format and failure behavior.
 
-- version-specific Openness documentation;
-- adapter prototype;
-- sample project.
+## KU-004 — UI-host behavior
 
-## KU-004 - Reference lookup
+Validate WPF behavior across supported V21 editions and workstation policies, including dispatcher ownership, focus, modality, scaling, and MessageBox fallback.
 
-Question:
+Evidence:
 
-- Is reference or symbol-usage information directly available for required object types?
+- manual UI test matrix;
+- dated Add-In logs;
+- screenshots or recordings when relevant.
 
-Evidence required:
+## KU-005 — Runtime compatibility versions
 
-- Openness API;
-- Openness Explorer;
-- export-analysis fallback assessment.
+The repository registers runtime IDs and generic minimum-version metadata, but it does not establish a release-tested compatibility matrix for Mimo, OpenCode, or Claude Code.
 
-## KU-005 - TIA API threading model
+Evidence:
 
-Question:
+- exact installed runtime versions;
+- adapter command/output tests;
+- server-mode health and task tests for OpenCode;
+- CLI encoding tests on supported Windows shells.
 
-- Which operations must run on which TIA/Add-In execution context?
+## KU-006 — TiaMcpServer compatibility
 
-Evidence required:
+Determine the exact TiaMcpServer version tested with each product release and the corresponding TIA Portal V21 environment.
 
-- official version-specific documentation;
-- controlled stress test;
-- no UI freeze.
+Evidence:
 
-**Partially answered**: The Add-In framework documentation (`02-addin-framework.md` sections 5 and 10) defines threading constraints: menu status callbacks MUST be fast, deterministic, and side-effect free; the UI thread MUST NOT be blocked while waiting for an LLM or external process; `ProgressProvider` MUST be used for user-visible long operations. Full stress testing with TIA Portal V21 is still required.
+- `dotnet tool list -g`;
+- `tia-mcp doctor`;
+- successful end-to-end task evidence;
+- upstream release notes when compatibility changes.
 
-## KU-006 - Add-In UI model
+Do not document an arbitrary minimum version until the release process enforces or records it.
 
-Question:
+## KU-007 — Add-In permission reduction
 
-- Does the target version support a preferred embedded panel, or should the product use a separate WPF window?
+The current `Config.xml` requests `TIA.ReadWrite` while the product workflow is read-only. Determine whether V21 selection capture, source extraction, WPF UI, logging, and Bridge communication remain fully functional with `TIA.ReadOnly`.
 
-Evidence required:
+This requires a code/package change and host validation, not a documentation-only edit.
 
-- target-version Add-In documentation;
-- UX prototype;
-- permission impact.
+Evidence:
 
-**Partially answered**: The official templates only provide context-menu providers (`ProjectTreeAddInProvider`, `DevicesAndNetworksAddInProvider`, etc.) and VCI workspace providers. No embedded panel mechanism is exposed in the Add-In API. For result display, the Add-In can use `MessageBoxProvider.ShowNotification()` or `ShowConfirmation()`, or launch a separate WPF window via `Siemens.Engineering.AddIn.Utilities.Process`. The Add-In uses WinForms (`UseWindowsForms=true` in csproj), which means WPF windows are also available.
+- package built with the reduced permission;
+- Add-In load and activation;
+- action execution for supported selections;
+- source extraction;
+- WPF and fallback behavior;
+- no security exceptions in logs.
 
-## KU-007 - Agent runtime API
+## KU-008 — Installation policies
 
-Question:
+Determine whether target enterprise workstations permit:
 
-- Which installed agent runtime version and endpoint schema will be used?
+- per-user `.NET` global tools;
+- writes to `%LOCALAPPDATA%\TiaAgent`;
+- writes to the V21 UserAddIns directory;
+- execution of external runtime CLIs;
+- loopback HTTP communication;
+- the current Add-In permission set and signing chain.
 
-Evidence required:
+Evidence must come from the target workstation policy or deployment owner.
 
-- installed version;
-- official OpenAPI or SDK;
-- health/task/progress/cancel prototype.
+## KU-009 — Release compatibility matrix
 
-**Resolved**: The Bridge supports multiple agent runtimes (Mimo CLI, OpenCode, Claude Code) via runtime adapters. Each adapter handles CLI or HTTP communication with the respective runtime. MCP servers are configured in `config/opencode.json` under the `mcp` key or via MCP config generation for Claude Code.
+Each public release should record:
 
-## KU-008 - MCP transport in Add-In process
+- product version and channel;
+- Windows version;
+- TIA Portal V21 update/build;
+- Openness and Publisher versions;
+- TiaMcpServer version;
+- tested runtime and version;
+- tested object/language coverage;
+- known limitations.
 
-Question:
+The current workflow publishes artifacts but does not automatically generate this matrix.
 
-- Which MCP C# SDK and transport are compatible with the Add-In target framework?
+## KU-010 — Future write safety
 
-Evidence required:
+Direct writes are not currently supported. Before any write capability is implemented, validate object-specific preview, concurrency, recovery, compilation, approval, and audit behavior.
 
-- package target framework;
-- dependency compatibility;
-- load test inside TIA process.
-
-Fallback:
-
-- external MCP host with named-pipe proxy.
-
-**Resolved**: The Add-In targets `net48`. The `ModelContextProtocol.AspNetCore` package requires net8.0, so the MCP server runs in a separate process. We use [Czarnak/tia-portal-mcp](https://github.com/Czarnak/tia-portal-mcp) as the external MCP server — it uses stdio transport (no HTTP port), a two-process model (.NET 8 host + .NET 4.8 OpennessWorker), and is installed as a .NET global tool (`dotnet tool install -g TiaMcpServer`). The agent runtime spawns it automatically via MCP config.
-
-## KU-009 - Package deployment permissions
-
-Question:
-
-- Does installation require administrator privileges in the target workstation policy?
-
-Evidence required:
-
-- target installation folder ACL;
-- enterprise deployment policy.
-
-## KU-010 - Digital signing
-
-Question:
-
-- Is Add-In package or assembly signing required by deployment policy?
-
-Evidence required:
-
-- customer security policy;
-- Siemens package support;
-- Windows application-control policy.
-
-## KU-011 - Compilation side effects
-
-Question:
-
-- What exact project state changes or dialogs can compilation trigger in the target version?
-
-Evidence required:
-
-- version documentation;
-- controlled test;
-- UI behavior recording.
-
-## KU-012 - Write recovery
-
-Question:
-
-- Which object types support a reliable export/import rollback?
-
-Evidence required:
-
-- object-specific Openness capability;
-- round-trip test;
-- compilation result.
-
-## KU-013 - Startdrive parameter whitelist
-
-Question:
-
-- Which target parameters are accessible in the deployed Startdrive version?
-
-Evidence required:
-
-- Siemens whitelist;
-- target device/version test.
-
-## KU-014 - Licensing
-
-Question:
-
-- Which engineering licenses are installed and required for each implemented operation?
-
-Evidence required:
-
-- target workstation license inventory;
-- operation test.
+No roadmap or upstream MCP capability may be treated as evidence that this product safely supports writes.
 
 ## Validation rule
 
 When resolving an item:
 
-1. attach evidence;
-2. record exact version;
-4. update affected tasks;
-5. create an ADR if the result changes architecture.
+1. attach repeatable evidence;
+2. record exact versions and environment;
+3. update the maintained user and technical documentation;
+4. add or update automated tests where possible;
+5. create an ADR when the result changes a durable architectural decision.
