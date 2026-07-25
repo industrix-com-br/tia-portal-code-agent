@@ -84,6 +84,9 @@ jobs:
   build-and-test:
     name: Build and test
     needs: serial-gate
+    # Keep validation evidence available even when an administrative gate fails.
+    # The workflow still fails overall because serial-gate remains a required job.
+    if: always()
     runs-on: windows-latest
     timeout-minutes: 15
 
@@ -229,4 +232,3 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
-
