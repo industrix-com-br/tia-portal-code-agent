@@ -5,6 +5,7 @@
     <LangVersion>latest</LangVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <NoWarn>$(NoWarn);CA1852;CS8600;CS8603</NoWarn>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="WindowsBase" />
