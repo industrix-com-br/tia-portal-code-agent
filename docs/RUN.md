@@ -72,7 +72,7 @@ tia-agent runtime use mimo --mode cli
 tia-agent config set runtimes.claude.executable C:\tools\claude.cmd
 ```
 
-The configuration file is `%LOCALAPPDATA%\TiaAgent\config.json`. See [RUNTIME.md](RUNTIME.md) for its verified schema.
+The main configuration file is `%LOCALAPPDATA%\TiaAgent\config.json`. See [CONFIGURATION.md](CONFIGURATION.md) for all configuration files and [RUNTIME.md](RUNTIME.md) for runtime behavior.
 
 ## Start services
 
@@ -136,7 +136,7 @@ The current Bridge exposes local endpoints for:
 | `PUT` | `/api/settings/runtime` | Change the default runtime |
 | `GET` | `/diagnostics` | Bridge diagnostics |
 
-Authenticated endpoints use the transient Bridge token stored below the runtime directory. Do not log or publish that token.
+Authenticated endpoints use the bearer token stored in `%LOCALAPPDATA%\TiaAgent\bridge.token`. Do not log, commit, or publish that token.
 
 ## Verify the system
 
