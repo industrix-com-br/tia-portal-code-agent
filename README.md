@@ -111,6 +111,7 @@ For full command reference, run `tia-agent --help`.
 
 ## Documentation
 
+- [Documentation Index](docs/README.md) -- navigation for users, contributors, maintainers, and reviewers
 - [Installation Guide](docs/INSTALLATION.md) -- prerequisites, stable/prerelease/specific version install
 - [Updating](docs/UPDATING.md) -- update procedures, channel-aware updates, verification
 - [Rollback](docs/ROLLBACK.md) -- restore previous versions
@@ -132,7 +133,7 @@ For full command reference, run `tia-agent --help`.
 .\build.ps1 install-dev
 ```
 
-Contributors should read [AGENTS.md](AGENTS.md) and the specifications under [`docs/spec/`](docs/spec/).
+Contributors should read [AGENTS.md](AGENTS.md), the [documentation index](docs/README.md), and the specifications under [`docs/spec/`](docs/spec/).
 
 ## Safety
 
