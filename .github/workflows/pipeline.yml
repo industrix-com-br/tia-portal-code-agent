@@ -52,10 +52,6 @@ jobs:
             }
           }
 
-      - name: Clean
-        shell: pwsh
-        run: ./build.ps1 clean
-
       - name: Restore
         run: dotnet restore TiaAgent.sln --locked-mode
 
