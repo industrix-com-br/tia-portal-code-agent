@@ -217,6 +217,14 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             sb.AppendFormat(",\"plcName\":\"{0}\"", EscapeJson(request.Selection.PlcName));
             sb.AppendFormat(",\"tiaPath\":\"{0}\"", EscapeJson(request.Selection.TiaPath));
             sb.AppendFormat(",\"language\":\"{0}\"", EscapeJson(request.Selection.Language));
+
+            // Include source code if present
+            if (!string.IsNullOrEmpty(request.Selection.Source))
+            {
+                sb.AppendFormat(",\"source\":\"{0}\"", EscapeJson(request.Selection.Source));
+                sb.AppendFormat(",\"sourceFormat\":\"{0}\"", EscapeJson(request.Selection.SourceFormat ?? "xml"));
+            }
+
             sb.Append('}');
         }
 
