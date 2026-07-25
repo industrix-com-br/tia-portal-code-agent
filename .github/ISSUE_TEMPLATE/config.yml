@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security Vulnerability Report
+    url: https://github.com/industrix-com-br/tia-portal-code-agent/security/advisories/new
+    about: Report security vulnerabilities privately through GitHub Security Advisories
