@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   format:
@@ -19,15 +20,43 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          show-progress: false
 
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
 
       - name: Apply repository formatting
+        id: format
+        continue-on-error: true
         shell: pwsh
-        run: dotnet format TiaAgent.sln
+        run: |
+          dotnet format TiaAgent.sln 2>&1 | Tee-Object -FilePath format.log
+          exit $LASTEXITCODE
+
+      - name: Publish formatter failure
+        if: steps.format.outcome == 'failure'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $log = Get-Content -LiteralPath format.log -Raw
+          if ($log.Length -gt 60000) {
+            $log = $log.Substring($log.Length - 60000)
+          }
+          $body = @"
+          Formatter diagnostic from temporary workflow:
+
+          ````text
+          $log
+          ````
+          "@
+          $body | Set-Content -LiteralPath formatter-comment.md -Encoding UTF8
+          gh pr comment $env:PR_NUMBER --body-file formatter-comment.md
+          exit 1
 
       - name: Commit formatting changes
+        if: steps.format.outcome == 'success'
         shell: pwsh
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
