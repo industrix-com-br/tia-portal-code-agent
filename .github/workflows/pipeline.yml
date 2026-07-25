@@ -1,0 +1,90 @@
+name: Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  ci:
+    name: CI
+    if: github.ref_type != 'tag'
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+
+      - name: Restore
+        run: dotnet restore TiaAgent.sln
+
+      - name: Test
+        run: dotnet test TiaAgent.sln --configuration Release --no-restore
+
+  publish:
+    name: Publish NuGet
+    if: github.ref_type == 'tag'
+    runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+
+      - name: Extract version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
+            throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
+          }
+          "value=$($Matches.version)" >> $env:GITHUB_OUTPUT
+
+      - name: Build release
+        shell: pwsh
+        env:
+          TIA_SIGNING_CERT_PFX_BASE64: ${{ secrets.TIA_SIGNING_CERT_PFX_BASE64 }}
+          TIA_SIGNING_CERT_PASSWORD: ${{ secrets.TIA_SIGNING_CERT_PASSWORD }}
+          TIA_SIGNING_CERT_THUMBPRINT: ${{ secrets.TIA_SIGNING_CERT_THUMBPRINT }}
+        run: ./build.ps1 release -Version "${{ steps.version.outputs.value }}"
+
+      - name: Login to NuGet
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish NuGet package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.value }}"
+          $package = Get-Item "artifacts/TiaAgent.Cli.$version.nupkg"
+          dotnet nuget push $package.FullName `
+            --source "https://api.nuget.org/v3/index.json" `
+            --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" `
+            --skip-duplicate

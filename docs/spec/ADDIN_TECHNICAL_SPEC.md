@@ -66,11 +66,11 @@ The `Config.xml` file is the Add-In manifest. It declares metadata, assemblies, 
 <PackageConfiguration xmlns="http://www.siemens.com/automation/Openness/AddIn/Publisher/V21">
   <Author>Author Name</Author>
   <Description>Add-In description</Description>
-  <AddInVersion>1.0.0</AddInVersion>
+  <AddInVersion>V21</AddInVersion>
   <Product>
     <Name>Product Name</Name>
     <Id>00000000-0000-0000-0000-000000000000</Id>
-    <Version>0.0.1.0</Version>
+    <Version>__ADDIN_MANIFEST_VERSION__</Version>
   </Product>
   <FeatureAssembly>
     <AssemblyInfo>

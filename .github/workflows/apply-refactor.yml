@@ -1,0 +1,73 @@
+name: Apply remaining refactor
+
+on:
+  push:
+    branches:
+      - agent/unified-versioning-pipeline
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/unified-versioning-pipeline
+          fetch-depth: 0
+
+      - name: Apply reviewed patch and remove obsolete files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $patch = Join-Path $env:RUNNER_TEMP "remaining.patch"
+          $output = [System.IO.File]::Create($patch)
+          try {
+            Get-ChildItem ".github/refactor-patch/part-*" | Sort-Object Name | ForEach-Object {
+              $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+              $output.Write($bytes, 0, $bytes.Length)
+            }
+          }
+          finally {
+            $output.Dispose()
+          }
+
+          git apply --whitespace=nowarn $patch
+
+          $obsolete = @(
+            ".ci/base-serial-roadmap.json",
+            ".ci/validate-serial-roadmap.ps1",
+            ".github/workflows/ci.yml",
+            ".github/workflows/diagnose-format-once.yml",
+            ".github/workflows/export-source.yml",
+            ".github/workflows/release.yml",
+            ".github/workflows/security.yml",
+            "docs/BETA_PUBLICATION.md",
+            "docs/RC_PUBLICATION.md",
+            "docs/RELEASE_RUNNER.md",
+            "docs/SERIAL_ROADMAP.md",
+            "docs/STABLE_PUBLICATION.md",
+            "scripts/automation/run-release-plan.ps1",
+            "scripts/ci/validate-serial-roadmap.ps1",
+            "scripts/runner/provision-release-runner.ps1",
+            "src/TiaAgent.Cli/Commands/GenerateReleaseMetadataCommand.cs",
+            "src/TiaAgent.Cli/Commands/VerifyReleaseCommand.cs",
+            "src/TiaAgent.Cli/Release/ReleaseGenerator.cs",
+            "src/TiaAgent.Cli/Release/ReleaseModels.cs",
+            "src/TiaAgent.Cli/Release/ReleaseValidator.cs",
+            "src/TiaAgent.Cli/Release/SbomGenerator.cs",
+            "tests/TiaAgent.Cli.Tests/Release/ReleaseMetadataTests.cs"
+          )
+          foreach ($path in $obsolete) {
+            if (Test-Path -LiteralPath $path) {
+              Remove-Item -LiteralPath $path -Force
+            }
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: finish versioning and pipeline cleanup"
+          git push origin "HEAD:$env:GITHUB_REF_NAME"

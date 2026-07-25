@@ -36,18 +36,13 @@ The MCP server is spawned automatically by the selected agent runtime when confi
 }
 ```
 
-## Build + Package + Install (one command)
+## Build, package, and install
 
 ```powershell
-.\build.ps1 all
-```
-
-Or step by step:
-
-```powershell
-.\build.ps1 build    # Compile
-.\build.ps1 pack     # Package with Publisher + deps + sign
-.\build.ps1 install  # Copy to UserAddIns
+.\build.ps1 build        # Compile
+.\build.ps1 test         # Run tests
+.\build.ps1 pack         # Package Add-In, payload, and NuGet tool
+.\build.ps1 install-dev  # Package and install the local Add-In
 ```
 
 ## Runtime Supervisor (Recommended)
@@ -122,9 +117,7 @@ The Add-In now only requires `TiaAgent.AddIn.dll` and `TiaAgent.Contracts.dll` �
 
 ## Verification
 
-```powershell
-.\build.ps1 verify   # Check package structure
-```
+Package verification is automatic in both `pack` and `release`.
 
 ## Add-In Features
 
@@ -178,7 +171,7 @@ The Add-In discovers services via the runtime manifest:
 
 ## Troubleshooting
 
-- **Red X on Add-In**: Rebuild with `.\build.ps1 all` — old packages may be stale
+- **Red X on Add-In**: Rebuild with `.\build.ps1 install-dev` — old packages may be stale
 - **Context menus missing**: Check `%LOCALAPPDATA%\TiaAgent\addin.log`
 - **Build fails**: Verify TIA Portal V21 is installed
 - **MCP server not found**: Run `tia-mcp doctor` to validate installation

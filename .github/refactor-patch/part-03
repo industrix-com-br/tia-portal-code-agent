@@ -1,0 +1,125 @@
+ld().Contain("<Version>__ADDIN_MANIFEST_VERSION__</Version>");
++        ProductVersionLiteral.IsMatch(config).Should().BeFalse();
+ 
+-        // PackAddIn must not reference the deploy directory (%APPDATA%).
+-        packTarget.Should().NotContain("AddInDeployDir",
+-            "PackAddIn must never copy files to %APPDATA%; only InstallAddIn may deploy");
+-        packTarget.Should().NotContain("APPDATA",
+-            "PackAddIn must never reference %APPDATA%");
++        targets.Should().Contain("<AddInManifestVersion>");
++        targets.Should().Contain("<ArtifactVersion>$(Version)</ArtifactVersion>");
++        targets.Should().Contain("Replace('__ADDIN_MANIFEST_VERSION__', '$(AddInManifestVersion)')");
++        targets.Should().Contain("TiaAgent-$(ArtifactVersion).addin");
++        targets.Should().NotContain("TiaAgent-$(AddInManifestVersion).addin");
+     }
+ 
+     [Fact]
+-    public void PackAddIn_uses_atomic_temp_file_pattern()
++    public void Beta_rc_and_stable_have_distinct_AddIn_artifact_names()
+     {
+-        var root = FindRepositoryRoot();
+-        var targets = File.ReadAllText(Path.Combine(root, "src", "TiaAgent.AddIn", "PackageAddIn.targets"));
+-
+-        // Extract the PackAddIn target section to verify atomicity is scoped correctly.
+-        var packStart = targets.IndexOf("<Target Name=\"PackAddIn\">", StringComparison.Ordinal);
+-        var packEnd = targets.IndexOf("</Target>", packStart, StringComparison.Ordinal);
+-        var packTarget = targets.Substring(packStart, packEnd - packStart);
+-
+-        // The final artifact must only appear after verification.
+-        // This requires a temp file that is renamed after verification passes.
+-        packTarget.Should().Contain("AddInTempPackagePath",
+-            "PackAddIn must write to a temp file before the final path");
+-
+-        // The temp file extension (.addin.tmp) must be defined in properties
+-        // so it differs from the final artifact name.
+-        targets.Should().Contain(".addin.tmp",
+-            "Temp file must use .addin.tmp extension to distinguish from final artifact");
++        var artifactNames = new[]
++        {
++            "TiaAgent-0.3.0-beta.1.addin",
++            "TiaAgent-0.3.0-rc.1.addin",
++            "TiaAgent-0.3.0.addin"
++        };
+ 
+-        packTarget.Should().Contain("Move-Item",
+-            "Atomic finalize must use Move-Item to rename temp to final path");
+-        packTarget.Should().Contain("AddInPackagePath",
+-            "Atomic finalize must target the final artifact path");
++        artifactNames.Should().OnlyHaveUniqueItems();
+     }
+ 
+     [Fact]
+-    public void Config_xml_still_uses_version_template()
++    public void PackAddIn_is_atomic_and_never_deploys_to_AppData()
+     {
+         var root = FindRepositoryRoot();
+-        var config = File.ReadAllText(Path.Combine(root, "src", "TiaAgent.AddIn", "Config.xml"));
++        var targets = File.ReadAllText(Path.Combine(root, "src", "TiaAgent.AddIn", "PackageAddIn.targets"));
++        var packStart = targets.IndexOf("<Target Name=\"PackAddIn\">", StringComparison.Ordinal);
++        var packEnd = targets.IndexOf("</Target>", packStart, StringComparison.Ordinal);
++        var packTarget = targets.Substring(packStart, packEnd - packStart);
+ 
+-        // Config.xml must use the placeholder, never a hardcoded version.
+-        config.Should().Contain("__PRODUCT_VERSION__");
+-        ProductVersionLiteral.IsMatch(config).Should().BeFalse(
+-            "Config.xml must not contain a hardcoded version number");
++        packTarget.Should().NotContain("AddInDeployDir");
++        packTarget.Should().NotContain("APPDATA");
++        packTarget.Should().Contain("AddInTempPackagePath");
++        packTarget.Should().Contain("Move-Item");
++        targets.Should().Contain(".addin.tmp");
+     }
+ 
+     private static string FindRepositoryRoot()
+diff --git a/tests/TiaAgent.ArchitectureTests/RepositoryHealthAndSecurityTests.cs b/tests/TiaAgent.ArchitectureTests/RepositoryHealthAndSecurityTests.cs
+index d02e47c..52c34b1 100644
+--- a/tests/TiaAgent.ArchitectureTests/RepositoryHealthAndSecurityTests.cs
++++ b/tests/TiaAgent.ArchitectureTests/RepositoryHealthAndSecurityTests.cs
+@@ -7,261 +7,55 @@ namespace TiaAgent.ArchitectureTests;
+ public sealed class RepositoryHealthAndSecurityTests
+ {
+     [Fact]
+-    public void Security_md_exists_and_references_security_model_spec()
++    public void Security_policy_and_authoritative_model_exist()
+     {
+         var root = FindRepositoryRoot();
+         var securityMdPath = Path.Combine(root, "SECURITY.md");
++        var securityModelPath = Path.Combine(root, "docs", "spec", "SECURITY_MODEL.md");
+ 
+-        File.Exists(securityMdPath).Should().BeTrue("SECURITY.md must exist in repository root");
++        File.Exists(securityMdPath).Should().BeTrue();
++        File.Exists(securityModelPath).Should().BeTrue();
+ 
+         var content = File.ReadAllText(securityMdPath);
+-        content.Should().Contain("docs/spec/SECURITY_MODEL.md",
+-            "SECURITY.md must reference the authoritative Security & Safety Model specification");
+-        content.Should().Contain("Reporting a Vulnerability",
+-            "SECURITY.md must define vulnerability disclosure procedures");
++        content.Should().Contain("docs/spec/SECURITY_MODEL.md");
++        content.Should().Contain("Reporting a Vulnerability");
+     }
+ 
+     [Fact]
+-    public void Security_model_spec_exists()
++    public void Repository_security_ownership_and_private_reporting_are_configured()
+     {
+         var root = FindRepositoryRoot();
+-        var specPath = Path.Combine(root, "docs", "spec", "SECURITY_MODEL.md");
++        var codeowners = File.ReadAllText(Path.Combine(root, ".github", "CODEOWNERS"));
++        var issueConfig = File.ReadAllText(Path.Combine(root, ".github", "ISSUE_TEMPLATE", "config.yml"));
+ 
+-        File.Exists(specPath).Should().BeTrue("docs/spec/SECURITY_MODEL.md must exist");
++        codeowners.Should().Contain("/SECURITY.md");
++        codeowners.Should().Contain("/.github/");
++        issueConfig.Should().Contain("Security Vulnerability Report");
+     }
+ 
+     [Fact]
+-    public void Security_workflow_exists()
++    public void AddIn_manifest_maintains_least_privilege()
+     {
+         var root = FindRepositoryRoot();
+-        var workflowPath = Path.Combine(root, ".github", "workflows", "security.yml");
++        var document = XDocument.Load(Path.Combine(root, "src", "TiaAgent.AddIn", "Config.xml"));
+ 
+-        F

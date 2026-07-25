@@ -197,7 +197,6 @@ Look for:
 **Common causes:**
 1. **Missing `UIPermission`** in the `.addin` package — rebuild and reinstall:
    ```powershell
-   ./build.ps1 pack-addin
    ./build.ps1 install-dev
    ```
 2. **TIA Portal cache** — close TIA Portal completely and reopen.

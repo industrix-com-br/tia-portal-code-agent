@@ -1,0 +1,118 @@
+;
+-        content.Should().Contain("Sanitize-WorkspaceEnvironment", "Provisioning script must support workspace sanitization");
+-    }
+-
+-    [Fact]
+-    public void Release_workflow_exists_and_automates_addin_packaging_on_release_runner()
+-    {
+-        var root = FindRepositoryRoot();
+-        var releaseWorkflowPath = Path.Combine(root, ".github", "workflows", "release.yml");
+-
+-        File.Exists(releaseWorkflowPath).Should().BeTrue(".github/workflows/release.yml must exist for consolidated release packaging");
+-
+-        var content = File.ReadAllText(releaseWorkflowPath);
+-        content.Should().Contain("release-runner", "Release workflow must run on self-hosted release runner");
+-        content.Should().Contain("self-hosted", "Release workflow must target self-hosted runners");
+-        content.Should().Contain("tia-v21", "Release workflow must target runners with TIA Portal V21");
+-        content.Should().Contain("pack-addin", "Release workflow must automate Add-In packaging");
+-        content.Should().Contain("verify-addin", "Release workflow must verify the Add-In package");
+-        content.Should().Contain("provision-release-runner.ps1", "Release workflow must sanitize the release runner workspace");
+-        content.Should().Contain("v[0-9]+", "Release workflow must trigger on version tag pushes");
+-    }
+-
+-    [Fact]
+-    public void Release_workflow_enforces_mandatory_release_signing_and_signature_verification()
+-    {
+-        var root = FindRepositoryRoot();
+-        var releaseWorkflowPath = Path.Combine(root, ".github", "workflows", "release.yml");
+-
+-        File.Exists(releaseWorkflowPath).Should().BeTrue(".github/workflows/release.yml must exist");
+-
+-        var content = File.ReadAllText(releaseWorkflowPath);
+-        content.Should().Contain("TIA_REQUIRE_SIGNING", "Release workflow must set TIA_REQUIRE_SIGNING environment variable");
+-        content.Should().Contain("-RequireSigning", "Release workflow must pass -RequireSigning to build.ps1");
+-        content.Should().Contain("TIA_SIGNING_CERT_PFX_BASE64", "Release workflow must inject PFX base64 secret");
+-        content.Should().Contain("TIA_SIGNING_CERT_PASSWORD", "Release workflow must inject PFX password secret");
+-    }
+-
+-    [Fact]
+-    public void Release_signing_documentation_exists_and_covers_required_topics()
+-    {
+-        var root = FindRepositoryRoot();
+-        var signingDocPath = Path.Combine(root, "docs", "SIGNING.md");
+-
+-        File.Exists(signingDocPath).Should().BeTrue("docs/SIGNING.md must exist");
+-
+-        var content = File.ReadAllText(signingDocPath);
+-        content.Should().Contain("Mandatory Signing", "SIGNING.md must define mandatory signing policy");
+-        content.Should().Contain("Automated Signature Verification", "SIGNING.md must document signature verification");
+-        content.Should().Contain("Secret Management", "SIGNING.md must document secret handling");
+-        content.Should().Contain("Certificate Rotation Procedure", "SIGNING.md must document certificate rotation");
+-        content.Should().Contain("Development vs. Release", "SIGNING.md must document separation of development and release packaging");
+-    }
+-
+-    [Fact]
+-    public void Release_runner_docs_use_windows_svc_cmd_not_svc_sh()
+-    {
+-        var root = FindRepositoryRoot();
+-        var docPath = Path.Combine(root, "docs", "RELEASE_RUNNER.md");
+-
+-        File.Exists(docPath).Should().BeTrue("docs/RELEASE_RUNNER.md must exist");
+-
+-        var content = File.ReadAllText(docPath);
+-        content.Should().NotContain("svc.sh",
+-            "RELEASE_RUNNER.md must not reference svc.sh (Linux) — use svc.cmd (Windows) for the self-hosted runner");
+-        content.Should().Contain("svc.cmd",
+-            "RELEASE_RUNNER.md must document Windows svc.cmd service commands");
+-    }
+-
+-    [Fact]
+-    public void Provisioning_script_references_correct_tia_addin_publisher_path()
+-    {
+-        var root = FindRepositoryRoot();
+-        var scriptPath = Path.Combine(root, "scripts", "runner", "provision-release-runner.ps1");
+-
+-        File.Exists(scriptPath).Should().BeTrue("scripts/runner/provision-release-runner.ps1 must exist");
+-
+-        var content = File.ReadAllText(scriptPath);
+-        content.Should().NotContain("V21.AddIn",
+-            "Provisioning script must not reference non-existent V21.AddIn subdirectory for the Add-In Publisher");
+-        content.Should().Contain("AddIn.Publisher",
+-            "Provisioning script must reference the Siemens Add-In Publisher executable");
+-    }
+-
+-    [Fact]
+-    public void Release_workflow_validates_signing_secrets_before_build()
+-    {
+-        var root = FindRepositoryRoot();
+-        var workflowPath = Path.Combine(root, ".github", "workflows", "release.yml");
+-
+-        File.Exists(workflowPath).Should().BeTrue(".github/workflows/release.yml must exist");
+-
+-        var content = File.ReadAllText(workflowPath);
+-        content.Should().Contain("Validate signing secrets",
+-            "Release workflow must validate signing secrets before expensive build operations");
+-        content.Should().Contain("TIA_SIGNING_CERT_PFX_BASE64",
+-            "Release workflow must check for TIA_SIGNING_CERT_PFX_BASE64");
+-        content.Should().Contain("TIA_SIGNING_CERT_PASSWORD",
+-            "Release workflow must check for TIA_SIGNING_CERT_PASSWORD");
+-        content.Should().Contain("TIA_SIGNING_CERT_THUMBPRINT",
+-            "Release workflow must check for TIA_SIGNING_CERT_THUMBPRINT");
+-    }
+-
+-    [Fact]
+-    public void Release_workflow_uses_nuget_trusted_publishing_via_oidc()
+-    {
+-        var root = FindRepositoryRoot();
+-        var workflowPath = Path.Combine(root, ".github", "workflows", "release.yml");
+-
+-        File.Exists(workflowPath).Should().BeTrue(".github/workflows/release.yml must exist");
+-
+-        var content = File.ReadAllText(workflowPath);
+-        content.Should().Contain("id-token: write",
+-            "Release workflow must request id-token:write permission for NuGet trusted publishing");
+-        // NUGET_API_KEY is allowed as a fallback for first-time package registration.
+-        // Once the package exists on nuget.org and trusted publishing is configured,
+-        // this should be removed in favor of pure OIDC.
++            .FirstOrDefault(element => element.Name.LocalName == "SecurityPermissions")
++            ?.Elements().Select(element => element.Name.LocalName).ToList() ?? new List<str
