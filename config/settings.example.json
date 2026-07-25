@@ -7,11 +7,5 @@
   "portRange": {
     "start": 43100,
     "end": 43200
-  },
-  "startupTimeoutSeconds": 60,
-  "healthCheckTimeoutSeconds": 30,
-  "healthCheckRetryIntervalMs": 1000,
-  "restartFailedServices": false,
-  "maxRestartAttempts": 3,
-  "logLevel": "Information"
+  }
 }
