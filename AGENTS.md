@@ -1,100 +1,99 @@
 # AGENTS.md
 
-## What this repo is
+## Repository purpose
 
-TIA Portal Code Agent — a Siemens TIA Portal V21 Add-In that integrates an AI agent (via MCP) to assist with PLC engineering tasks.
+TIA Portal Code Agent is a Siemens TIA Portal V21 Add-In that sends selected engineering context to a local Bridge, an interchangeable coding-agent runtime, and the external `TiaMcpServer` MCP integration.
 
 ## Non-negotiable constraints
 
-- **Target:** TIA Portal V21, .NET Framework 4.8, x64 only. Do not retarget to modern .NET.
-- **Assembly model:** V21 modular assemblies. Do NOT reference the removed monolithic `Siemens.Engineering.AddIn.dll` or the old `PublicAPI\V21.AddIn` path.
-- **MCP server:** Uses [Czarnak/tia-portal-mcp](https://github.com/Czarnak/tia-portal-mcp) via stdio transport. Install with `dotnet tool install -g TiaMcpServer`.
-- **MVP is read-only.** No writes, no PLC download, no safety/hardware/network changes.
-- **No Siemens binaries in source control.** References resolved from installed TIA at build time.
-- **No `--skipEngMemberCheck`** in CI or release builds.
-- **User Add-Ins install to:** `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns`
+- **TIA target:** TIA Portal V21 and the V21 modular Public API assemblies.
+- **Framework split:** `TiaAgent.AddIn` targets .NET Framework 4.8; `TiaAgent.Bridge` and `TiaAgent.Cli` target .NET 8. Do not retarget the Add-In to modern .NET.
+- **Architecture:** Windows x64 only.
+- **Assembly model:** do not reference the removed monolithic `Siemens.Engineering.AddIn.dll` or the old `PublicAPI\V21.AddIn` path.
+- **MCP server:** use [Czarnak/tia-portal-mcp](https://github.com/Czarnak/tia-portal-mcp) through `TiaMcpServer`; do not duplicate TIA access inside this repository.
+- **Current product workflow:** read-only explanations, reviews, and change proposals. No direct project writes, PLC download, safety changes, or hardware/network changes.
+- **Siemens binaries:** never commit or redistribute Siemens assemblies.
+- **CI and release:** never use `--skipEngMemberCheck`.
+- **User Add-Ins directory:** `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns`.
 
-## Architecture at a glance
+## Current topology
 
 ```text
-TIA Portal Add-In (UI + context capture, net48)
-  → Runtime Discovery (reads runtime.json)
-    → Bridge (HTTP, port 43119)
-      → IAgentRuntime (runtime abstraction)
-        +--- MimoCliRuntime (mimo run --format json)
-        +--- OpenCodeRuntime (server or CLI mode)
-        +--- ClaudeCodeRuntime (claude -p --output-format json)
-          → Czarnak's tia-mcp (stdio MCP server, .NET 8)
-            → OpennessWorker (.NET 4.8)
-              → TIA Portal Openness SDK
+TIA Portal V21
+  -> TiaAgent.AddIn (net48, context capture and WPF UI)
+    -> loopback HTTP
+      -> TiaAgent.Bridge (net8.0)
+        -> Mimo CLI, OpenCode, or Claude Code CLI
+          -> TiaMcpServer / tia-mcp (stdio MCP)
+            -> TIA Portal Openness
+
+TiaAgent.Cli (net8.0)
+  -> installs versioned payloads
+  -> deploys the Add-In
+  -> starts, stops, and diagnoses runtime services
 ```
 
-This repo contains: **Add-In**, **Application** (business logic), **Contracts** (DTOs, errors, interfaces, runtime abstraction), **Bridge** (HTTP bridge with runtime adapters), **Runtime Supervisor** (PowerShell scripts for service lifecycle).
+Repository projects:
 
-MCP and Openness are delegated to Czarnak's `TiaMcpServer` — do not duplicate TIA access.
+- `TiaAgent.AddIn` — TIA Portal provider, context extraction, Bridge client, and result UI.
+- `TiaAgent.Application` — application-level abstractions and policies.
+- `TiaAgent.Contracts` — DTOs, runtime contracts, errors, and shared schemas.
+- `TiaAgent.Bridge` — local HTTP API, tasks, authentication, and runtime adapters.
+- `TiaAgent.Cli` — installation, version activation, update, rollback, diagnostics, and runtime supervision.
+
+The response window implementation is part of the Add-In source tree. `TiaAgent.ResponseCenter` files are not part of the current solution and must not be treated as a shipped component unless the solution and packaging are intentionally updated.
 
 ## Supported runtimes
 
-The Bridge supports multiple interchangeable coding agent runtimes:
-
-| Runtime | ID | Mode | Prerequisites |
-|---|---|---|---|
-| Mimo CLI | `mimo` | CLI | `mimo` on PATH |
-| OpenCode | `opencode` | Server or CLI | `opencode` on PATH |
-| Claude Code CLI | `claude` | CLI | `claude` on PATH |
+| Runtime | ID | Supported mode |
+|---|---|---|
+| Mimo CLI | `mimo` | CLI |
+| OpenCode | `opencode` | Server or CLI |
+| Claude Code CLI | `claude` | CLI |
 
 Runtime selection precedence:
-1. Runtime explicitly included in the task request
-2. `TIA_AGENT_RUNTIME` environment variable
-3. User configuration file (`%LOCALAPPDATA%\TiaAgent\config.json`)
-4. Configured default (`opencode`)
 
-See `docs/RUNTIME.md` for full runtime configuration details.
+1. task request override;
+2. `TIA_AGENT_RUNTIME` environment variable;
+3. `%LOCALAPPDATA%\TiaAgent\config.json`;
+4. default `opencode`.
 
-## Runtime Supervisor
+There is no silent runtime fallback.
 
-The Runtime Supervisor orchestrates service startup, monitoring, and shutdown. It is runtime-aware: it reads `%LOCALAPPDATA%\TiaAgent\config.json` to determine which runtime to start, and only launches a server process when the selected runtime is in server mode.
+## Runtime lifecycle
 
-```text
-# Start all services
-tia-agent start  (or .\src\runtime\Scripts\run.ps1)
-
-# Check status
-tia-agent status (or .\src\runtime\Scripts\status.ps1)
-
-# Stop all services
-tia-agent stop   (or .\src\runtime\Scripts\stop.ps1)
+```powershell
+tia-agent start
+tia-agent status
+tia-agent stop
+tia-agent runtime doctor
 ```
 
-See `docs/RUN.md` for detailed usage, `docs/RUNTIME.md` for runtime configuration, and `docs/spec/ARCHITECTURE.md` for the architectural specification.
+Repository-local scripts under `src/runtime/Scripts/` are development entry points. User documentation should prefer the CLI commands.
 
-See `docs/spec/ARCHITECTURE.md` for the full architecture contract.
+## Current Add-In actions
 
-## MCP tools (Czarnak/tia-portal-mcp)
+- `Explain selected object` -> `tia-explain`
+- `Review selected object` -> `tia-review`
+- `Propose change` -> `tia-change`
 
-The MCP server exposes batch tools:
+The Add-In's proposal request asks the runtime to propose improvements. It does not implement an approval or apply workflow. Do not document direct writes as supported product behavior.
 
-- **`execute_read_batch`** — up to 50 read operations per call
-- **`preview_write_batch`** — preview writes, returns `safetyToken`
-- **`apply_write_batch`** — apply previewed writes with `safetyToken`
-- **`get_project_status`** — project metadata
-- **Project lifecycle:** `open_project`, `save_project`, `close_project`, `archive_project`, `create_project`, `save_project_as`
+## Working in this repository
 
-Read operations: `browse_project_tree`, `get_block_content`, `list_tag_tables`, `read_hardware_config`, `read_cross_references`, `search_equipment_catalog`, `compile_check`, `get_project_status`
+- Build: `.\build.ps1 build`
+- Test: `.\build.ps1 test`
+- Package: `.\build.ps1 pack`
+- Development install: `.\build.ps1 install-dev`
+- Release validation: `.\build.ps1 release -Version X.Y.Z[-alpha.N|-beta.N|-rc.N]`
 
-## Agent profiles
+Additional rules:
 
-- `agents/tia-explain.md` — read-only explanation agent
-- `agents/tia-review.md` — review agent (reads + compile check)
-- `agents/tia-change.md` — change agent (reads + preview + apply with safety tokens)
+- keep engineering objects local to the operation that resolves them;
+- never cache or transfer live `IEngineeringObject` instances;
+- propagate `CancellationToken` through long-running operations;
+- use structured errors and a `correlationId` for every task;
+- keep services on loopback;
+- update documentation whenever a command, package path, configuration key, workflow, or supported feature changes.
 
-## Working in this repo
-
-- **Specs are the source of truth.** If code conflicts with specs, the spec wins until a decision updates it.
-- **Build:** `.\build.ps1 build`
-- **Test:** `.\build.ps1 test`
-- **Package:** `.\build.ps1 pack`
-- **Release:** `.\build.ps1 release -Version X.Y.Z[-prerelease]`
-- **Engineering objects are local-scope only.** Never store `IEngineeringObject` in fields, properties, statics, caches, or DI singletons. Re-resolve on every operation.
-- **All operations need `CancellationToken`.** All errors must be structured (see error codes in ARCHITECTURE.md).
-- **Every task needs a `correlationId`** for traceability.
+See [docs/CLI.md](docs/CLI.md), [docs/spec/ARCHITECTURE.md](docs/spec/ARCHITECTURE.md), and [docs/spec/SECURITY_MODEL.md](docs/spec/SECURITY_MODEL.md).
