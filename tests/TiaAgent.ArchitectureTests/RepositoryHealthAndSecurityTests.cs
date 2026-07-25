@@ -18,7 +18,8 @@ public sealed class RepositoryHealthAndSecurityTests
 
         var content = File.ReadAllText(securityMdPath);
         content.Should().Contain("docs/spec/SECURITY_MODEL.md");
-        content.Should().Contain("Reporting a Vulnerability");
+        content.Should().Contain("Security > Advisories > New draft security advisory");
+        content.Should().Contain("security@industrix.com.br");
     }
 
     [Fact]
