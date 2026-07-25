@@ -67,7 +67,7 @@ public sealed class SimpleMarkdownFlowDocumentRenderer : IAgentResponseRenderer
 
             var doc = new WpfDocs.FlowDocument
             {
-                FontFamily = new FontFamily("Segoe UI"),
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Emoji, Segoe UI Symbol"),
                 FontSize = 13,
                 PagePadding = new Thickness(8)
             };
@@ -308,13 +308,30 @@ public sealed class SimpleMarkdownFlowDocumentRenderer : IAgentResponseRenderer
             section.Blocks.Add(langLabel);
         }
 
-        var codePara = new WpfDocs.Paragraph
+        // Use a TextBox inside BlockUIContainer for code blocks.
+        // TextBox with NoWrap preserves indentation, tabs, and long lines.
+        var codeTextBox = new System.Windows.Controls.TextBox
         {
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12
+            Text = code,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Segoe UI Emoji, Segoe UI Symbol"),
+            FontSize = 12,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.NoWrap,
+            HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Disabled,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            IsTabStop = true,
+            SelectionOpacity = 0.5
         };
-        codePara.Inlines.Add(new WpfDocs.Run(code));
-        section.Blocks.Add(codePara);
+
+        var container = new WpfDocs.BlockUIContainer
+        {
+            Margin = new Thickness(0),
+            Child = codeTextBox
+        };
+        section.Blocks.Add(container);
 
         doc.Blocks.Add(section);
     }

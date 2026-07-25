@@ -134,7 +134,7 @@
       "tiaagent.application": {
         "type": "Project",
         "dependencies": {
-          "TiaAgent.Contracts": "[0.2.2-alpha.1, )"
+          "TiaAgent.Contracts": "[0.0.0-dev, )"
         }
       },
       "tiaagent.contracts": {
