@@ -14,6 +14,8 @@ public static class TextPayloadDiagnostics
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
+    // Only strong multi-character signatures are listed. Individual characters
+    // such as Ã and Â are legitimate Unicode and must not be treated as corruption.
     private static readonly string[] KnownMojibakePatterns =
     {
         "ΓÇ",
@@ -21,8 +23,12 @@ public static class TextPayloadDiagnostics
         "Γö",
         "≡ƒ",
         "â€",
-        "Ã",
-        "Â"
+        "Ãƒ",
+        "Ã‚",
+        "Â©",
+        "Â®",
+        "Â ",
+        "ðŸ"
     };
 
     public static string DescribeText(string boundary, string? text, int previewScalarLimit = 32)
