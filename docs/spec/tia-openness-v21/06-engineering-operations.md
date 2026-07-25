@@ -1,192 +1,94 @@
 # TIA Portal V21 engineering operations
 
-## 1. Purpose
+## Scope
 
-This file defines how the project should implement operations that go beyond simple object navigation:
+This file summarizes V21 APIs for compile, import/export, compare, cross-reference, CAx transfer, and download.
 
-- compile;
-- import/export;
-- document exchange;
-- compare;
-- cross-reference;
-- CAx transfer;
-- download.
+These are Siemens API capabilities, not current TIA Portal Code Agent commands. The current product exposes read-oriented analysis and change proposals only. It does not compile, import, export, mutate, save, or download a TIA project as a user-facing workflow.
 
-## 2. Compilation
+## Compilation
 
-`Siemens.Engineering.Compiler.ICompilable` defines `Compile()`.
+`Siemens.Engineering.Compiler.ICompilable` and `CompileProvider` expose compile operations. `CompilerResult` includes state, error and warning counts, and hierarchical messages.
 
-`CompileProvider.Compile()` returns `CompilerResult`. The result exposes:
+Any future compile integration must preserve the full message hierarchy, target identity, duration, and explicit capability status. Compilation must not be presented as successful based only on the absence of an exception.
 
-- `State`;
-- `ErrorCount`;
-- `WarningCount`;
-- hierarchical `Messages`.
+## SIMATIC ML and document exchange
 
-Compiler messages contain description, path, timestamp, state and nested messages/counts.
+Typed domain objects expose import and export methods with explicit options. Step7 also supports document-oriented exchange for selected objects and languages.
 
-### Compile contract
+Reference file-handling rules:
 
-A compile tool result MUST include:
+- use a per-operation temporary directory;
+- normalize and validate paths;
+- do not accept unrestricted destinations from model output;
+- hash generated or consumed artifacts;
+- bound retention and logging;
+- remove temporary files on cancellation or failure where possible.
 
-```json
-{
-  "state": "...",
-  "errorCount": 0,
-  "warningCount": 0,
-  "messages": [],
-  "target": {},
-  "durationMs": 0
-}
-```
+The current product does not expose import or export commands. Source extraction performed for a selected object is an internal read-context operation and must report unsupported formats accurately.
 
-The service MUST recursively flatten or preserve the hierarchy of compiler messages. It MUST NOT only return the top-level count.
+## Compare
 
-## 3. SIMATIC ML import/export
+The V21 compare API exposes result states and a hierarchical result tree. Compare can support future review and validation, but it must not automatically choose which side overwrites the other.
 
-Common options:
+Online compare is outside the current product boundary.
 
-- `ExportOptions.None`;
-- `ExportOptions.WithDefaults`;
-- `ExportOptions.WithReadOnly`;
-- `ImportOptions.None`;
-- `ImportOptions.Override`;
-- culture-related import options.
+## Cross-reference
 
-Typed domain objects expose their own `Export` or composition-level `Import` methods. For example, PLC blocks export from `PlcBlock` and import through `PlcBlockComposition`.
+`Siemens.Engineering.CrossReference` exposes source, reference, location, access-type, filter, and result objects.
 
-### File handling rules
+Cross-reference queries can be expensive. A future read integration must accept a bounded scope and result limit and must return truncation and capability information.
 
-- Use a per-operation temporary directory.
-- Normalize and validate all paths.
-- Never allow an agent to provide an unrestricted destination path.
-- Calculate SHA-256 for exported/imported artifacts.
-- Retain artifacts only according to configured audit policy.
-- Delete temporary files on cancellation or failure where possible.
+## CAx transfer
 
-## 4. Document import/export
+`Siemens.Engineering.Cax.CaxProvider` exposes device- and project-level export/import with merge options and structured transfer results.
 
-Step7 supports document-oriented import/export in addition to SIMATIC ML. Result types include document result state, messages and specialized results for blocks and types.
+CAx import is a broad project mutation. TIA Portal Code Agent does not expose CAx transfer. Any future implementation would require deterministic preview, explicit merge policy, approval, recovery, and complete result evidence.
 
-Use document exchange when the target API explicitly supports it and the workflow benefits from source-like files. Do not assume document export is available for every PLC language or object.
+## Download
 
-## 5. Compare
+`Siemens.Engineering.Download.DownloadProvider` exposes device download and configuration decisions involving module state, online/offline differences, protection, initialization, HMI components, user-management data, and Safety content.
 
-The base compare API includes:
+Download is deployment, not ordinary engineering editing. It is explicitly unsupported by the current product.
 
-- `CompareResult`;
-- `CompareResultElement` tree;
-- `CompareResultState` values for identical, different, missing and folder-specific states;
-- software compare targets.
+A future download workflow would require, at minimum:
 
-A compare tool SHOULD return a normalized tree:
+- dedicated authorization;
+- exact target and interface confirmation;
+- complete configuration preview;
+- explicit handling of protection credentials outside model text;
+- no guessed choices;
+- complete result-message capture;
+- no automatic module start;
+- separation from project mutation and save.
 
-```csharp
-public sealed record CompareNode(
-    string Path,
-    string? LeftName,
-    string? RightName,
-    string State,
-    string? Detail,
-    IReadOnlyList<CompareNode> Children);
-```
+## Future operation state model
 
-Compare results should be used to support review, not to automatically choose which side overwrites the other.
-
-## 6. Cross-reference
-
-`Siemens.Engineering.CrossReference` provides:
-
-- `CrossReferenceService`;
-- source and reference objects;
-- reference locations;
-- access and reference types;
-- filters and result objects.
-
-Cross-reference queries can be expensive. Tools SHOULD accept scope, reference type and result limits. Return truncation and continuation information explicitly.
-
-## 7. CAx transfer
-
-`Siemens.Engineering.Cax.CaxProvider` supports:
-
-- export at device or project level;
-- import from a CAx file;
-- explicit log file variants;
-- merge options through `CaxImportOptions`.
-
-Import options include retaining existing TIA devices, overwriting and moving items to a parking-lot folder.
-
-`TransferResult` provides state, warnings, errors and messages.
-
-CAx import is a broad project mutation. It MUST always require preview, explicit merge policy and approval.
-
-## 8. Download
-
-`Siemens.Engineering.Download.DownloadProvider` supplies device download functionality. V21 exposes a large set of download configuration objects for decisions such as:
-
-- stopping or starting modules;
-- overwriting target/system data;
-- initialization and reinitialization;
-- protection/password handling;
-- differing online/offline configurations;
-- HMI component handling;
-- PLC web application handling;
-- user-management data;
-- Safety program selection.
-
-A download commonly requires a configuration callback/delegate to choose among options presented by the API.
-
-### Download policy
-
-Download is a deployment action, not a normal engineering write.
-
-- MUST be disabled by default for autonomous use.
-- MUST require a dedicated user permission.
-- MUST identify the exact target interface/device.
-- MUST show all configuration decisions before execution.
-- MUST never guess passwords or protection choices.
-- MUST return the complete `DownloadResult` message hierarchy.
-- MUST not automatically start modules unless the approved plan says so.
-- MUST not combine project mutation, save and download into one opaque tool.
-
-## 9. Operation state machine
+A future mutating or deployment operation would need a state model similar to:
 
 ```text
 requested
-  -> resolved target
+  -> target resolved
   -> capability checked
   -> preview generated
-  -> approval required (when mutating/high risk)
-  -> exclusive access acquired
+  -> explicit approval
+  -> stale-state validation
+  -> exclusive access where required
   -> operation executed
-  -> validation/compile
+  -> compile or validation
   -> committed
-  -> optional save
+  -> optional explicit save
   -> completed
 ```
 
-Every state transition SHOULD be logged with an operation ID.
+This is a safety design reference, not an implemented Bridge task flow.
 
-## 10. Standard error codes
+## Error taxonomy for future integrations
 
-```text
-TIA_SESSION_NOT_FOUND
-TIA_PROJECT_NOT_OPEN
-TIA_OBJECT_NOT_FOUND
-TIA_CAPABILITY_UNAVAILABLE
-TIA_UNSUPPORTED_IN_V21
-TIA_PERMISSION_DENIED
-TIA_TRUST_REQUIRED
-TIA_CONCURRENCY_CONFLICT
-TIA_USER_CANCELLED
-TIA_IMPORT_FAILED
-TIA_EXPORT_FAILED
-TIA_COMPILE_FAILED
-TIA_COMPARE_FAILED
-TIA_CAX_FAILED
-TIA_DOWNLOAD_CONFIGURATION_REQUIRED
-TIA_DOWNLOAD_FAILED
-TIA_SAFETY_RESTRICTION
-```
+Stable operation errors should distinguish session, project, object, capability, version, permission, trust, cancellation, import/export, compile, compare, CAx, download, and Safety restrictions.
 
-Include original exception type and technical details in diagnostics, not in the stable public error code.
+Original exception types and technical details belong in protected diagnostics, not in a stable public error code or unfiltered model response.
+
+## Current product rule
+
+Do not add any command, feature description, or example implying support for compile, mutation, online compare, CAx transfer, save, or download until the complete workflow exists in the Add-In and Bridge and has been validated against a controlled V21 environment.
