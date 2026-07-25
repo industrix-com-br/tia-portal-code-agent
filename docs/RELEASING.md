@@ -1,6 +1,6 @@
 # Releasing
 
-A release is produced from one immutable Git tag and published as one NuGet package containing the complete installation payload.
+A release is produced from one immutable Git tag, published as one NuGet package containing the complete installation payload, and mirrored as a GitHub Release with downloadable assets.
 
 ## 1. Choose the version
 
@@ -39,9 +39,24 @@ The tag triggers `.github/workflows/pipeline.yml`. The publication job extracts 
 .\build.ps1 release -Version 0.3.0-beta.1
 ```
 
-It then authenticates to NuGet through Trusted Publishing and pushes the generated `.nupkg` with `--skip-duplicate`.
+It then authenticates to NuGet through Trusted Publishing, pushes the generated `.nupkg` with `--skip-duplicate`, and creates a GitHub Release containing:
 
-## 4. Validate NuGet publication
+- generated release notes;
+- `TiaAgent.Cli.<version>.nupkg`;
+- `TiaAgent-<version>.addin`.
+
+Versions containing a prerelease suffix such as `-alpha.N`, `-beta.N`, or `-rc.N` are marked as prereleases on GitHub.
+
+## 4. Validate the GitHub Release
+
+Open the release associated with the tag and confirm:
+
+- the release is published rather than only showing as a tag;
+- prerelease versions are marked correctly;
+- the NuGet package and signed Add-In are attached;
+- the generated release notes describe the expected changes.
+
+## 5. Validate NuGet publication
 
 After NuGet finishes processing the package, verify the exact version is visible and install it in a clean location:
 
@@ -70,6 +85,18 @@ Configure:
 - `TIA_SIGNING_CERT_PFX_BASE64`;
 - `TIA_SIGNING_CERT_PASSWORD`;
 - optionally `TIA_SIGNING_CERT_THUMBPRINT`.
+
+### GitHub token permissions
+
+The release job requires:
+
+```yaml
+permissions:
+  contents: write
+  id-token: write
+```
+
+`contents: write` creates the GitHub Release and uploads its assets. `id-token: write` enables NuGet Trusted Publishing through OIDC.
 
 ### NuGet Trusted Publishing
 
