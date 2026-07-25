@@ -110,9 +110,15 @@ jobs:
       - name: Check code formatting
         shell: pwsh
         run: |
-          dotnet format TiaAgent.sln --verify-no-changes
+          dotnet restore TiaAgent.sln --locked-mode
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Code formatting violations detected. Run 'dotnet format TiaAgent.sln' locally and commit the fixes."
+            Write-Error "Locked restore failed before formatting. Refresh and commit packages.lock.json files."
+            exit 1
+          }
+
+          dotnet format TiaAgent.sln --no-restore --verify-no-changes
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Code formatting violations detected. Run 'dotnet format TiaAgent.sln --no-restore' locally and commit the fixes."
             exit 1
           }
 
