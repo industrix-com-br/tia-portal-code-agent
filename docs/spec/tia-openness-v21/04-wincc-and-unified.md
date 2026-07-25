@@ -1,185 +1,103 @@
 # TIA Portal V21 WinCC and WinCC Unified API
 
-## 1. Two HMI object models
+## Scope
 
-TIA Portal V21 exposes two distinct HMI API families:
+This file summarizes the V21 HMI API families for future navigation and review work. It does not describe HMI tools currently exposed by TIA Portal Code Agent.
+
+The current product can analyze a supported selected object when snapshot extraction or the external MCP integration provides the required context. It does not implement HMI import, mutation, validation, deletion, connection changes, or download workflows.
+
+## Two HMI object models
+
+TIA Portal V21 exposes distinct HMI API families:
 
 | Product family | Assembly | Root software type |
 |---|---|---|
-| WinCC classic / panel-oriented engineering | `Siemens.Engineering.WinCC` | `Siemens.Engineering.Hmi.HmiTarget` |
+| WinCC classic and panel-oriented engineering | `Siemens.Engineering.WinCC` | `Siemens.Engineering.Hmi.HmiTarget` |
 | WinCC Unified | `Siemens.Engineering.WinCCUnified` | `Siemens.Engineering.HmiUnified.HmiSoftware` |
 
-The models are not interchangeable. The integration MUST branch by the runtime type returned by `SoftwareContainer.Software`.
+The models are not interchangeable. An integration must branch on the runtime type returned by `SoftwareContainer.Software`, not on the device display name.
 
-## 2. Common discovery path
+## Discovery path
 
 ```text
 ProjectBase.Devices
   -> DeviceItem
     -> GetService<SoftwareContainer>()
       -> Software
-        -> HmiTarget OR HmiSoftware
+        -> HmiTarget or HmiSoftware
 ```
 
-A service MUST return an explicit HMI family discriminator:
+Any serialized result should include an explicit family discriminator such as `classic` or `unified`.
 
-```csharp
-public enum HmiFamily
-{
-    Classic,
-    Unified
-}
-```
+## WinCC classic
 
-Do not infer the family from device display names.
+`Siemens.Engineering.Hmi.HmiTarget` exposes areas including:
 
-## 3. WinCC classic — `HmiTarget`
+- connections and cycles;
+- graphic and text lists;
+- screens, templates, popups, and slide-ins;
+- tags;
+- VBScript;
+- alarms, logging, reports, recipes, scheduling, globalization, themes, and dynamics.
 
-`Siemens.Engineering.Hmi.HmiTarget` represents the classic HMI target. It exposes:
+Typed compositions and folders should be used instead of manually constructed object paths. Connection, alarm, script, and runtime-related data require stricter review than descriptive metadata.
 
-- `Connections`;
-- `Cycles`;
-- `GraphicLists`;
-- `TextLists`;
-- `ScreenFolder`;
-- `ScreenTemplateFolder`;
-- popup and slide-in screen folders;
-- screen overview and global elements;
-- `TagFolder`;
-- `VBScriptFolder`;
-- target metadata such as name and author.
+## WinCC Unified
 
-The classic assembly contains domain namespaces for:
+`Siemens.Engineering.HmiUnified.HmiSoftware` exposes areas including:
 
-- screens and screen objects;
-- HMI tags;
-- alarms;
-- runtime scripting;
-- communication connections;
-- logging;
-- reports;
-- recipes;
-- scheduling;
-- globalization;
-- themes and dynamics.
-
-`HmiTarget` also supports import of screen overview/global elements through SIMATIC ML operations.
-
-### Classic HMI guidance
-
-- Navigate through system folders and compositions rather than constructing object paths manually.
-- Export/import screen or tag artifacts through their typed APIs where available.
-- Keep script handling separate from graphical-object handling.
-- Treat connection and alarm modifications as higher impact than text-only changes.
-
-## 4. WinCC Unified — `HmiSoftware`
-
-`Siemens.Engineering.HmiUnified.HmiSoftware` exposes major Unified collections directly:
-
-- `Screens` and `ScreenGroups`;
-- `Tags`, `SystemTags`, `TagTables` and `TagTableGroups`;
-- `Connections`;
-- `AlarmClasses`, `AnalogAlarms` and `DiscreteAlarms`;
-- `AlarmLogs`, `DataLogs` and `AuditTrails`;
-- `Scripts`;
-- text, system-text and graphic lists;
+- screens and screen groups;
+- tags, system tags, tables, and table groups;
+- connections;
+- alarm classes and alarms;
+- alarm logs, data logs, and audit trails;
+- scripts;
+- text, system-text, and graphic lists;
 - OPC UA alarm types;
-- plant object tags;
+- plant-object tags;
 - runtime settings.
 
-The Unified assembly has a large UI surface covering:
+The Unified UI model also contains shapes, controls, widgets, faceplates, dynamization, event handlers, trend parts, and plant views.
 
-- screen base objects;
-- shapes, controls and widgets;
-- faceplates and interfaces;
-- dynamization;
-- event handlers;
-- control parts and trend parts;
-- runtime settings;
-- plant objects and plant views.
+## Validation and import/export
 
-## 5. Validation model
+Unified common objects expose validation patterns through `HmiBase`, `IValidator`, and `HmiValidationResult`. Classic and Unified import/export formats differ and must never be routed through one untyped operation.
 
-Unified common objects derive from or follow patterns around `HmiBase` and `IValidator`.
+These APIs are reference capabilities only. The current product does not expose Unified validation or HMI import/export commands.
 
-`HmiBase.Validate()` returns a list of `HmiValidationResult` objects containing:
+## Efficient extraction
 
-- property name;
-- errors;
-- warnings.
+Screen object graphs can be large. Read-oriented integrations should return layered, bounded data:
 
-A Unified mutation flow SHOULD validate the modified object before compile or save. Validation warnings and errors MUST be returned as structured data.
-
-## 6. Import/export
-
-Unified exposes common import result objects and export interfaces such as `IChromDataExchangeExport` for supported script/module data exchange.
-
-Classic and Unified import/export formats differ by object family. The integration MUST NOT route both through a single untyped "import HMI" operation.
-
-Recommended contract:
-
-```csharp
-public sealed record HmiArtifactExportRequest(
-    HmiHandle Target,
-    HmiFamily Family,
-    HmiArtifactKind Kind,
-    ObjectHandle Object,
-    ExportProfile Profile);
-```
-
-## 7. Efficient object extraction
-
-Screen models can contain very large object graphs. Agent tools SHOULD return layered summaries:
-
-1. screen metadata;
-2. top-level objects and hierarchy;
+1. target and screen metadata;
+2. top-level hierarchy;
 3. selected properties;
-4. event/dynamization references;
-5. detailed properties only for requested objects.
+4. referenced tags, scripts, events, and dynamization;
+5. detailed object properties only when explicitly requested.
 
-Do not serialize every property of every screen object by default. This is expensive and creates noisy model context.
+Do not serialize every property of every screen object by default. Include truncation and capability status, and do not log full screen or script payloads unnecessarily.
 
-## 8. Stable DTO model
+## Risk boundary
 
-```csharp
-public sealed record HmiScreenSummary(
-    string Id,
-    string Name,
-    HmiFamily Family,
-    int ObjectCount,
-    IReadOnlyList<string> ReferencedTags,
-    IReadOnlyList<string> Scripts,
-    string ContentHash);
-```
+Current product support is limited to analysis of available read context.
 
-For graphical objects, use project-generated IDs scoped to the current session plus a path-like locator for diagnostics. Revalidate both the screen hash and object identity before writes.
+The following are not supported product workflows:
 
-## 9. HMI operation risk
+- changing screen text, objects, bindings, or dynamization;
+- changing tags, alarms, connections, or runtime settings;
+- deleting HMI objects;
+- importing or exporting as a user-facing product action;
+- validating or compiling an HMI target;
+- downloading to an HMI device.
 
-| Operation | Default policy |
-|---|---|
-| List screens/tags/connections | read-only, automatic |
-| Export a screen or script | read-only, audited |
-| Validate Unified object | validation, automatic |
-| Change text or non-runtime metadata | approved mutation |
-| Change tag binding/dynamization | approved mutation with impact review |
-| Change connection or runtime settings | high-impact approval |
-| Delete screens/tags/alarms | high-impact approval |
-| Download to HMI | separate deployment permission |
+Any future HMI write workflow would need family-specific contracts, deterministic preview, explicit approval, stale-state validation, recovery, validation or compile evidence, and audit records.
 
-## 10. Recommended tools
+## Validation sources
 
-```text
-tia_list_hmi_targets
-tia_get_hmi_overview
-tia_list_hmi_screens
-tia_get_hmi_screen_summary
-tia_get_hmi_screen_object
-tia_list_hmi_tags
-tia_list_hmi_alarms
-tia_list_hmi_connections
-tia_export_hmi_artifact
-tia_validate_unified_object
-```
+Before using an HMI symbol:
 
-Mutation tools MUST be family-specific or must require an explicit `family` discriminator validated against the live target.
+- verify it in the supplied V21 XML catalog and installed assembly;
+- confirm whether the target is Classic or Unified;
+- validate availability with a representative licensed V21 project;
+- bound object-graph extraction in tests;
+- update product documentation only after the workflow is implemented and validated.
