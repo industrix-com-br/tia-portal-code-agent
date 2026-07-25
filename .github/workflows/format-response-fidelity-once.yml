@@ -25,39 +25,15 @@ jobs:
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
 
-      - name: Restore solution
-        id: restore
-        continue-on-error: true
+      - name: Regenerate lock files
         shell: pwsh
-        run: |
-          dotnet restore TiaAgent.sln --locked-mode --verbosity normal 2>&1 | Tee-Object -FilePath restore.log
-          exit $LASTEXITCODE
-
-      - name: Publish restore failure
-        if: steps.restore.outcome == 'failure'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          $log = (Get-Content -LiteralPath restore.log | Select-Object -Last 120) -join [Environment]::NewLine
-          @(
-            'Restore diagnostic tail from temporary workflow:',
-            '',
-            '~~~text',
-            $log,
-            '~~~'
-          ) | Set-Content -LiteralPath restore-comment.md -Encoding UTF8
-          gh pr comment $env:PR_NUMBER --body-file restore-comment.md
-          exit 1
+        run: dotnet restore TiaAgent.sln --force-evaluate
 
       - name: Apply repository formatting
-        if: steps.restore.outcome == 'success'
         shell: pwsh
         run: dotnet format TiaAgent.sln --no-restore
 
-      - name: Commit formatting changes
-        if: steps.restore.outcome == 'success'
+      - name: Commit generated and formatted changes
         shell: pwsh
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
@@ -67,8 +43,8 @@ jobs:
           git add -A
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "style: apply dotnet format"
+            git commit -m "chore: refresh locks and apply dotnet format"
             git push origin "HEAD:$env:HEAD_BRANCH"
           } else {
-            Write-Host "No formatting changes were required."
+            Write-Host "No generated or formatting changes were required."
           }
