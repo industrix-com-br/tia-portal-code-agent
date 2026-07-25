@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using TiaAgent.Bridge.Diagnostics;
 using TiaAgent.Bridge.Runtime;
 using TiaAgent.Contracts.Bridge;
+using TiaAgent.Contracts.Diagnostics;
 using TiaAgent.Contracts.Runtime;
 
 namespace TiaAgent.Bridge.Tasks;
@@ -211,6 +212,8 @@ public sealed class TaskManager : IDisposable
                 entry.Status = BridgeTaskStatusValues.Completed;
                 entry.Stage = "completed";
                 entry.Response = result.Response;
+                _logger.Info(TextPayloadDiagnostics.DescribeText(
+                    "4.task-status.response-stored", entry.Response));
                 entry.Message = "Task completed successfully";
             }
             else
