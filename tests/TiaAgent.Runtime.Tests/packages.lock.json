@@ -133,12 +133,6 @@
       },
       "tiaagent.contracts": {
         "type": "Project"
-      },
-      "tiaagent.opencode": {
-        "type": "Project",
-        "dependencies": {
-          "TiaAgent.Contracts": "[0.0.0-dev, )"
-        }
       }
     }
   }

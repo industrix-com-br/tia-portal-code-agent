@@ -114,9 +114,11 @@ function Invoke-MsBuildTarget {
 
 function Invoke-Build {
     Write-Header "BUILD $ProductVersion"
-    Write-Step 1 2 "Compiling solution..."
-    Invoke-Dotnet @("build", "$Root\TiaAgent.sln", "--configuration", $Config, "--verbosity", "quiet")
-    Write-Step 2 2 "Verifying artifacts..."
+    Write-Step 1 3 "Restoring packages..."
+    Invoke-Dotnet @("restore", "$Root\TiaAgent.sln", "--force-evaluate", "--verbosity", "quiet")
+    Write-Step 2 3 "Compiling solution..."
+    Invoke-Dotnet @("build", "$Root\TiaAgent.sln", "--configuration", $Config, "--no-restore", "--verbosity", "quiet")
+    Write-Step 3 3 "Verifying artifacts..."
     foreach ($artifact in @(
         "$Root\src\TiaAgent.AddIn\bin\$Config\net48\TiaAgent.AddIn.dll",
         "$Root\src\TiaAgent.Bridge\bin\$Config\net8.0\TiaAgent.Bridge.dll",
