@@ -36,181 +36,158 @@ public sealed class SimpleMarkdownFlowDocumentRenderer : IAgentResponseRenderer
     /// <summary>
     /// Renders Markdown content into a WPF FlowDocument.
     /// Returns null if the content is empty.
-    /// Never throws — any parsing error falls back to plain-text rendering
-    /// within the same FlowDocument.
+    /// Throws on rendering failure — does not silently degrade to plain text.
     /// </summary>
     public WpfDocs.FlowDocument? Render(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
             return null;
 
-        try
-        {
-            // Create brushes inline — no static initialization
-            var headerBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4));
-            headerBrush.Freeze();
+        // Create brushes inline — no static initialization
+        var headerBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4));
+        headerBrush.Freeze();
 
-            var codeBackground = new SolidColorBrush(Color.FromRgb(0xF5, 0xF5, 0xF5));
-            codeBackground.Freeze();
+        var codeBackground = new SolidColorBrush(Color.FromRgb(0xF5, 0xF5, 0xF5));
+        codeBackground.Freeze();
 
-            var codeBorder = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD));
-            codeBorder.Freeze();
+        var codeBorder = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD));
+        codeBorder.Freeze();
 
-            var inlineCodeBackground = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
-            inlineCodeBackground.Freeze();
+        var inlineCodeBackground = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
+        inlineCodeBackground.Freeze();
 
-            var tableBorderBrush = new SolidColorBrush(Color.FromRgb(0xD0, 0xD0, 0xD0));
-            tableBorderBrush.Freeze();
+        var tableBorderBrush = new SolidColorBrush(Color.FromRgb(0xD0, 0xD0, 0xD0));
+        tableBorderBrush.Freeze();
 
-            var tableHeaderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
-            tableHeaderBrush.Freeze();
+        var tableHeaderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
+        tableHeaderBrush.Freeze();
 
-            var doc = new WpfDocs.FlowDocument
-            {
-                FontFamily = new FontFamily("Segoe UI, Segoe UI Emoji, Segoe UI Symbol"),
-                FontSize = 13,
-                PagePadding = new Thickness(8)
-            };
-
-            var lines = content.Split('\n');
-            var blockCount = 0;
-            var i = 0;
-
-            while (i < lines.Length)
-            {
-                var line = lines[i];
-                var trimmed = line.TrimEnd('\r');
-
-                // ── Fenced code block ──
-                if (trimmed.StartsWith("```"))
-                {
-                    var lang = trimmed.Length > 3 ? trimmed.Substring(3).Trim() : "";
-                    var codeLines = new List<string>();
-                    i++;
-                    while (i < lines.Length)
-                    {
-                        var codeLine = lines[i].TrimEnd('\r');
-                        if (codeLine.StartsWith("```"))
-                        {
-                            i++;
-                            break;
-                        }
-                        codeLines.Add(codeLine);
-                        i++;
-                    }
-                    AddCodeBlock(doc, string.Join("\n", codeLines), lang, codeBackground, codeBorder);
-                    blockCount++;
-                    continue;
-                }
-
-                // ── Horizontal rule ──
-                if (IsHorizontalRule(trimmed))
-                {
-                    AddHorizontalRule(doc);
-                    blockCount++;
-                    i++;
-                    continue;
-                }
-
-                // ── Heading ──
-                if (trimmed.Length > 0 && trimmed[0] == '#')
-                {
-                    var level = 0;
-                    while (level < trimmed.Length && trimmed[level] == '#') level++;
-                    if (level <= 6 && level < trimmed.Length && trimmed[level] == ' ')
-                    {
-                        var headingText = trimmed.Substring(level + 1);
-                        AddHeading(doc, headingText, level, headerBrush);
-                        blockCount++;
-                        i++;
-                        continue;
-                    }
-                }
-
-                // ── Table ──
-                if (trimmed.Contains("|") && trimmed.TrimStart().StartsWith("|"))
-                {
-                    var tableLines = new List<string>();
-                    while (i < lines.Length)
-                    {
-                        var tl = lines[i].TrimEnd('\r');
-                        if (!tl.Contains("|") || string.IsNullOrWhiteSpace(tl))
-                            break;
-                        tableLines.Add(tl);
-                        i++;
-                    }
-                    if (tableLines.Count >= 2)
-                    {
-                        AddTable(doc, tableLines, tableBorderBrush, tableHeaderBrush);
-                        blockCount++;
-                    }
-                    else
-                    {
-                        // Not a valid table — render as text
-                        foreach (var tl in tableLines)
-                        {
-                            AddParagraph(doc, tl, null);
-                            blockCount++;
-                        }
-                    }
-                    continue;
-                }
-
-                // ── List item (bullet or numbered) ──
-                if (IsBulletItem(trimmed) || IsNumberedItem(trimmed))
-                {
-                    while (i < lines.Length)
-                    {
-                        var li = lines[i].TrimEnd('\r');
-                        if (string.IsNullOrWhiteSpace(li))
-                            break;
-                        if (!IsBulletItem(li) && !IsNumberedItem(li))
-                            break;
-                        AddListItem(doc, li);
-                        blockCount++;
-                        i++;
-                    }
-                    continue;
-                }
-
-                // ── Blank line ──
-                if (string.IsNullOrWhiteSpace(trimmed))
-                {
-                    i++;
-                    continue;
-                }
-
-                // ── Regular paragraph ──
-                AddParagraph(doc, trimmed, null);
-                blockCount++;
-                i++;
-            }
-
-            AddInLogger.Info($"SimpleMarkdownFlowDocumentRenderer: rendered {blockCount} blocks from {lines.Length} lines.");
-            return doc;
-        }
-        catch (Exception ex)
-        {
-            AddInLogger.Warn($"SimpleMarkdownFlowDocumentRenderer.Render failed: {ex.GetType().Name}: {ex.Message}");
-            // Return a plain-text fallback rather than null
-            return CreatePlainTextFallback(content);
-        }
-    }
-
-    /// <summary>
-    /// Creates a plain-text FlowDocument as last-resort fallback.
-    /// </summary>
-    private static WpfDocs.FlowDocument CreatePlainTextFallback(string text)
-    {
         var doc = new WpfDocs.FlowDocument
         {
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
+            FontFamily = new FontFamily("Segoe UI, Segoe UI Emoji, Segoe UI Symbol"),
+            FontSize = 13,
             PagePadding = new Thickness(8)
         };
-        doc.Blocks.Add(new WpfDocs.Paragraph(new WpfDocs.Run(text)));
+
+        var lines = content.Split('\n');
+        var blockCount = 0;
+        var i = 0;
+
+        while (i < lines.Length)
+        {
+            var line = lines[i];
+            var trimmed = line.TrimEnd('\r');
+
+            // ── Fenced code block ──
+            if (trimmed.StartsWith("```"))
+            {
+                var lang = trimmed.Length > 3 ? trimmed.Substring(3).Trim() : "";
+                var codeLines = new List<string>();
+                i++;
+                while (i < lines.Length)
+                {
+                    var codeLine = lines[i].TrimEnd('\r');
+                    if (codeLine.StartsWith("```"))
+                    {
+                        i++;
+                        break;
+                    }
+                    codeLines.Add(codeLine);
+                    i++;
+                }
+                AddCodeBlock(doc, string.Join("\n", codeLines), lang, codeBackground, codeBorder);
+                blockCount++;
+                continue;
+            }
+
+            // ── Horizontal rule ──
+            if (IsHorizontalRule(trimmed))
+            {
+                AddHorizontalRule(doc);
+                blockCount++;
+                i++;
+                continue;
+            }
+
+            // ── Heading ──
+            if (trimmed.Length > 0 && trimmed[0] == '#')
+            {
+                var level = 0;
+                while (level < trimmed.Length && trimmed[level] == '#') level++;
+                if (level <= 6 && level < trimmed.Length && trimmed[level] == ' ')
+                {
+                    var headingText = trimmed.Substring(level + 1);
+                    AddHeading(doc, headingText, level, headerBrush);
+                    blockCount++;
+                    i++;
+                    continue;
+                }
+            }
+
+            // ── Table ──
+            if (trimmed.Contains("|") && trimmed.TrimStart().StartsWith("|"))
+            {
+                var tableLines = new List<string>();
+                while (i < lines.Length)
+                {
+                    var tl = lines[i].TrimEnd('\r');
+                    if (!tl.Contains("|") || string.IsNullOrWhiteSpace(tl))
+                        break;
+                    tableLines.Add(tl);
+                    i++;
+                }
+                if (tableLines.Count >= 2)
+                {
+                    AddTable(doc, tableLines, tableBorderBrush, tableHeaderBrush);
+                    blockCount++;
+                }
+                else
+                {
+                    // Not a valid table — render as text
+                    foreach (var tl in tableLines)
+                    {
+                        AddParagraph(doc, tl, null);
+                        blockCount++;
+                    }
+                }
+                continue;
+            }
+
+            // ── List item (bullet or numbered) ──
+            if (IsBulletItem(trimmed) || IsNumberedItem(trimmed))
+            {
+                while (i < lines.Length)
+                {
+                    var li = lines[i].TrimEnd('\r');
+                    if (string.IsNullOrWhiteSpace(li))
+                        break;
+                    if (!IsBulletItem(li) && !IsNumberedItem(li))
+                        break;
+                    AddListItem(doc, li);
+                    blockCount++;
+                    i++;
+                }
+                continue;
+            }
+
+            // ── Blank line ──
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                i++;
+                continue;
+            }
+
+            // ── Regular paragraph ──
+            AddParagraph(doc, trimmed, null);
+            blockCount++;
+            i++;
+        }
+
+        AddInLogger.Info($"SimpleMarkdownFlowDocumentRenderer: rendered {blockCount} blocks from {lines.Length} lines.");
         return doc;
     }
+
+
 
     private static bool IsHorizontalRule(string line)
     {

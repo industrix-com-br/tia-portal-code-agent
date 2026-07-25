@@ -11,7 +11,8 @@ public interface IAgentResponseRenderer
 {
     /// <summary>
     /// Renders the given content string into a FlowDocument.
-    /// Returns null if the content is empty or rendering fails.
+    /// Returns null if the content is empty.
+    /// Throws an exception if rendering fails.
     /// </summary>
     FlowDocument? Render(string content);
 }
