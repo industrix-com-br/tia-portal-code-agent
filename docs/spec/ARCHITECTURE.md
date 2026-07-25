@@ -147,7 +147,8 @@ The tag workflow in `.github/workflows/pipeline.yml` runs the release build on t
 
 ## Dependency rules
 
-- Add-In code may depend on `netstandard2.0` contracts and application abstractions, but must remain compatible with the TIA Portal .NET Framework host.
+- `TiaAgent.AddIn` references `TiaAgent.Contracts`; it does not reference `TiaAgent.Application`.
+- `TiaAgent.Application` references `TiaAgent.Contracts` and remains independent of the Add-In host.
 - Bridge and CLI may use .NET 8 libraries unavailable to the Add-In.
 - Siemens assemblies are resolved from the installed V21 Public API and must not be copied into source control or the NuGet payload.
 - Agent runtimes and `TiaMcpServer` are external prerequisites, not bundled executables.
