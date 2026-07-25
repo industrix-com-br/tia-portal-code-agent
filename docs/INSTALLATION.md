@@ -33,22 +33,27 @@ tia-mcp doctor
 
 ## Install the CLI
 
-Latest stable release:
+> [!IMPORTANT]
+> TIA Portal Code Agent currently has only prerelease packages. The command `dotnet tool install --global TiaAgent.Cli` considers stable versions by default. Until the first stable release is published, that command can report that the package was not found in the configured NuGet feeds even though `alpha` or `beta` versions are available.
 
-```powershell
-dotnet tool install --global TiaAgent.Cli
-```
-
-Latest prerelease:
+Install the latest prerelease version:
 
 ```powershell
 dotnet tool install --global TiaAgent.Cli --prerelease
 ```
 
-Specific version:
+Install a specific prerelease version:
 
 ```powershell
-dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.1
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.5
+```
+
+The explicit version works because it selects that prerelease package directly. The `--prerelease` option instead selects the latest available prerelease.
+
+After a stable version is published, install the latest stable release with:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli
 ```
 
 Verify the command:
@@ -113,7 +118,7 @@ tia-agent channel set beta
 tia-agent channel set alpha
 ```
 
-The channel controls which payload versions the CLI accepts during update and activation operations. It does not change the NuGet command used to install the CLI package.
+The channel controls which payload versions the CLI accepts during update and activation operations. It does not change how the .NET SDK resolves the NuGet package. Use `--prerelease` or `--version` when installing a prerelease CLI package.
 
 ## Uninstall
 
@@ -126,7 +131,7 @@ dotnet tool uninstall --global TiaAgent.Cli
 Remove one installed payload version:
 
 ```powershell
-tia-agent uninstall --version 0.3.0-beta.1
+tia-agent uninstall --version 0.3.0-beta.5
 ```
 
 Remove every installed payload version:
