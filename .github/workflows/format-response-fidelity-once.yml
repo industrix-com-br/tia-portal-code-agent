@@ -40,12 +40,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          $log = Get-Content -LiteralPath restore.log -Raw
-          if ($log.Length -gt 60000) {
-            $log = $log.Substring($log.Length - 60000)
-          }
+          $log = (Get-Content -LiteralPath restore.log | Select-Object -Last 120) -join [Environment]::NewLine
           @(
-            'Restore diagnostic from temporary workflow:',
+            'Restore diagnostic tail from temporary workflow:',
             '',
             '~~~text',
             $log,
