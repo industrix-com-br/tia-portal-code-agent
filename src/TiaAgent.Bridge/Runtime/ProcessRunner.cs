@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TiaAgent.Bridge.Diagnostics;
+using TiaAgent.Contracts.Diagnostics;
 
 namespace TiaAgent.Bridge.Runtime;
 
@@ -165,50 +166,55 @@ public sealed class ProcessRunner : IDisposable
 
             await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
 
-            // ═══════════════════════════════════════════════════════════════════
-            // BOUNDARY 1 DIAGNOSTICS: Log raw bytes BEFORE any decoding
-            // ═══════════════════════════════════════════════════════════════════
-            _logger.Info($"ProcessRunner [BOUNDARY 1 - raw process output]: stdout={stdoutBytes.Length} bytes, stderr={stderrBytes.Length} bytes");
-            if (stdoutBytes.Length > 0)
-            {
-                _logger.Info($"ProcessRunner [BOUNDARY 1 - raw hex sample]: {FormatHexSample(stdoutBytes, 128)}");
-            }
+            // BOUNDARY 1: bounded byte diagnostics with a stable SHA-256.
+            _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stdout.raw", stdoutBytes));
+            _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stderr.raw", stderrBytes));
 
-            // ═══════════════════════════════════════════════════════════════════
-            // DECODE: Strict UTF-8 with error detection
-            // If the raw bytes are NOT valid UTF-8, this will throw or produce
-            // replacement characters — proving the corruption happened BEFORE here.
-            // ═══════════════════════════════════════════════════════════════════
-            string decodedStdout, decodedStderr;
+            // DECODE: strict UTF-8. Invalid bytes are an explicit process failure;
+            // never continue with replacement characters because that hides the
+            // first corrupt boundary and mutates the response.
+            string decodedStdout;
             try
             {
                 decodedStdout = s_strictUtf8.GetString(stdoutBytes);
             }
             catch (DecoderFallbackException ex)
             {
-                _logger.Error($"ProcessRunner [BOUNDARY 1 - INVALID UTF-8 in stdout]: {ex.Message}. Hex: {FormatHexSample(stdoutBytes, 256)}");
-                // Fall back to replacement-char decoding to continue processing
-                decodedStdout = Encoding.UTF8.GetString(stdoutBytes);
+                _logger.Error($"ProcessRunner: stdout is not valid UTF-8: {ex.Message}");
+                return new ProcessResult
+                {
+                    ExitCode = process.ExitCode,
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    Error = "Process stdout contained invalid UTF-8 bytes"
+                };
             }
 
+            string decodedStderr;
             try
             {
                 decodedStderr = s_strictUtf8.GetString(stderrBytes);
             }
             catch (DecoderFallbackException ex)
             {
-                _logger.Error($"ProcessRunner [BOUNDARY 1 - INVALID UTF-8 in stderr]: {ex.Message}. Hex: {FormatHexSample(stderrBytes, 256)}");
-                decodedStderr = Encoding.UTF8.GetString(stderrBytes);
+                _logger.Error($"ProcessRunner: stderr is not valid UTF-8: {ex.Message}");
+                return new ProcessResult
+                {
+                    ExitCode = process.ExitCode,
+                    StdOut = decodedStdout,
+                    StdErr = string.Empty,
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    Error = "Process stderr contained invalid UTF-8 bytes"
+                };
             }
 
-            // ═══════════════════════════════════════════════════════════════════
-            // BOUNDARY 2: Decoded string — log code points for comparison
-            // ═══════════════════════════════════════════════════════════════════
-            _logger.Info($"ProcessRunner [BOUNDARY 2 - decoded string]: stdout={decodedStdout.Length} chars, stderr={decodedStderr.Length} chars");
-            if (decodedStdout.Length > 0)
-            {
-                _logger.Info($"ProcessRunner [BOUNDARY 2 - code points sample]: {FormatCodePoints(decodedStdout, 128)}");
-            }
+            // BOUNDARY 2: decoded strings. Matching hashes with later text
+            // boundaries prove the payload was not changed after decoding.
+            _logger.Info(TextPayloadDiagnostics.DescribeText("2.process.stdout.decoded", decodedStdout));
+            _logger.Info(TextPayloadDiagnostics.DescribeText("2.process.stderr.decoded", decodedStderr));
 
             // Split for progress reporting ONLY — the decoded strings are the source of truth.
             // Line splitting must be observational and must not become the source of returned output.
@@ -333,7 +339,6 @@ public sealed class ProcessRunner : IDisposable
         catch
         {
             // Best-effort kill
-            try { if (!process.HasExited) process.Kill(); } catch { }
         }
     }
 
