@@ -42,8 +42,6 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
     timeout-minutes: 30
-    env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
     permissions:
       contents: read
       id-token: write
@@ -56,6 +54,8 @@ jobs:
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
         with:
           global-json-file: global.json
 
