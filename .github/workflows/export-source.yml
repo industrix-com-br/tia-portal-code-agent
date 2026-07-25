@@ -1,0 +1,23 @@
+name: Export source
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive source
+        run: tar --exclude=.git -czf source.tar.gz .
+      - name: Upload source
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-tree
+          path: source.tar.gz
+          if-no-files-found: error
