@@ -52,32 +52,75 @@ jobs:
             }
           }
 
+          $testProjects = @(Get-ChildItem -Path tests -Filter *.csproj -Recurse -File)
+          if ($testProjects.Count -eq 0) {
+            throw "No test projects were discovered under tests/."
+          }
+
       - name: Restore
         run: dotnet restore TiaAgent.sln --locked-mode
 
       - name: Build
         run: dotnet build TiaAgent.sln --configuration Release --no-restore
 
-      - name: Test Contracts
-        run: dotnet test tests/TiaAgent.Contracts.Tests/TiaAgent.Contracts.Tests.csproj --configuration Release --no-build --no-restore
+      - name: Test all projects
+        shell: pwsh
+        run: |
+          $resultsRoot = Join-Path $PWD "artifacts/test-results"
+          New-Item -ItemType Directory -Path $resultsRoot -Force | Out-Null
 
-      - name: Test Application
-        run: dotnet test tests/TiaAgent.Application.Tests/TiaAgent.Application.Tests.csproj --configuration Release --no-build --no-restore
+          $projects = @(Get-ChildItem -Path tests -Filter *.csproj -Recurse -File | Sort-Object FullName)
+          if ($projects.Count -eq 0) {
+            throw "No test projects were discovered under tests/."
+          }
 
-      - name: Test Architecture
-        run: dotnet test tests/TiaAgent.ArchitectureTests/TiaAgent.ArchitectureTests.csproj --configuration Release --no-build --no-restore
+          $failed = @()
+          $summary = @(
+            "## Automated tests",
+            "",
+            "| Project | Result |",
+            "|---|---|"
+          )
 
-      - name: Test Bridge
-        run: dotnet test tests/TiaAgent.Bridge.Tests/TiaAgent.Bridge.Tests.csproj --configuration Release --no-build --no-restore
+          foreach ($project in $projects) {
+            $relativePath = [IO.Path]::GetRelativePath($PWD, $project.FullName).Replace("\", "/")
+            $projectName = $project.BaseName
+            $projectResults = Join-Path $resultsRoot $projectName
+            New-Item -ItemType Directory -Path $projectResults -Force | Out-Null
 
-      - name: Test Runtime
-        run: dotnet test tests/TiaAgent.Runtime.Tests/TiaAgent.Runtime.Tests.csproj --configuration Release --no-build --no-restore
+            Write-Host "::group::Test $relativePath"
+            & dotnet test $project.FullName `
+              --configuration Release `
+              --no-build `
+              --no-restore `
+              --logger "trx;LogFileName=$projectName.trx" `
+              --results-directory $projectResults
+            $exitCode = $LASTEXITCODE
+            Write-Host "::endgroup::"
 
-      - name: Test CLI
-        run: dotnet test tests/TiaAgent.Cli.Tests/TiaAgent.Cli.Tests.csproj --configuration Release --no-build --no-restore
+            if ($exitCode -eq 0) {
+              $summary += "| ``$relativePath`` | PASS |"
+            } else {
+              $failed += $relativePath
+              $summary += "| ``$relativePath`` | FAIL |"
+              Write-Host "::error file=$relativePath::Test project failed with exit code $exitCode."
+            }
+          }
 
-      - name: Test Add-In
-        run: dotnet test tests/TiaAgent.AddIn.Tests/TiaAgent.AddIn.Tests.csproj --configuration Release --no-build --no-restore
+          $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+          if ($failed.Count -gt 0) {
+            throw "Test projects failed: $($failed -join ', ')"
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ github.run_id }}
+          path: artifacts/test-results
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish NuGet
