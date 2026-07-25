@@ -2,75 +2,65 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/LICENSE)
 
-A local AI-assisted engineering interface for Siemens TIA Portal. It connects contextual Add-In actions to interchangeable coding-agent runtimes and exposes supported project data through the Model Context Protocol (MCP).
+A local AI-assisted engineering interface for Siemens TIA Portal V21. The `TiaAgent.Cli` global tool installs the Bridge and Add-In payload and manages local runtime services.
 
 > [!CAUTION]
-> This project is experimental and not ready for production use. Do not use it on live systems, safety programs, or workflows where an incorrect response or modification could affect people, equipment, availability, or compliance.
-
-## What it does
-
-From a supported object in TIA Portal, an engineer can invoke actions such as:
-
-- explain PLC blocks and project objects;
-- review logic and diagnostics;
-- inspect references, dependencies, and signal usage;
-- generate engineering documentation.
-
-The current MVP is read-only first. PLC download, safety changes, hardware/network changes, and unattended project modifications are not supported.
+> This project is experimental and is not ready for production use.
 
 ## Installation
 
-Install the CLI global tool:
-
 ```powershell
-# Stable release
+# Stable
 dotnet tool install --global TiaAgent.Cli
 
-# Prerelease (alpha, beta, RC)
+# Prerelease
 dotnet tool install --global TiaAgent.Cli --prerelease
-```
 
-Then install the payload, restart TIA Portal, and start services:
-
-```powershell
+# Install the bundled payload
 tia-agent install
+
+# Start services
 tia-agent start
 ```
 
-In TIA Portal V21:
+Restart TIA Portal V21, enable **TIA Portal Code Agent** under **Options > Settings > Add-Ins**, then right-click a supported project object and choose an action under **AI Code Agent**.
 
-1. Go to **Options > Settings > Add-Ins**.
-2. Activate **TIA Portal Code Agent**.
-3. Right-click a supported PLC object and choose an AI Assistant action.
+## Current actions
 
-## Quick commands
+- Explain selected object
+- Review selected object
+- Propose change
 
-| Command | Description |
-|---|---|
-| `tia-agent version` | Show current version |
-| `tia-agent doctor` | Run environment diagnostics |
-| `tia-agent status` | Show runtime status and health |
-| `tia-agent start` | Start and monitor runtime services |
-| `tia-agent stop` | Stop runtime services |
-| `tia-agent update` | Update to latest payload |
-| `tia-agent rollback` | Restore previous version |
-| `tia-agent channel` | View or change update channel |
+The current product workflow is read-only. The proposal action returns recommendations and does not directly modify the TIA project.
+
+## Useful commands
+
+```powershell
+tia-agent doctor
+tia-agent status
+tia-agent runtime list
+tia-agent version --verbose
+tia-agent stop
+```
+
+There is no separate `tia-agent versions` command. Installed payload versions are displayed by `tia-agent version --verbose`.
 
 ## Requirements
 
-- Windows 10 or 11 x64;
-- Siemens TIA Portal V21 with Openness installed;
-- membership in the `Siemens TIA Openness` Windows group;
-- .NET SDK 8 or newer;
-- `tia-mcp` installed;
-- at least one supported agent runtime (`opencode`, `mimo`, or `claude`).
+- Windows 10 or 11 x64
+- Siemens TIA Portal V21 with Openness
+- membership in the `Siemens TIA Openness` Windows group
+- .NET 8 SDK and .NET Framework 4.8 runtime
+- `TiaMcpServer`
+- Mimo CLI, OpenCode, or Claude Code CLI
 
 ## Documentation
 
-- [GitHub Repository](https://github.com/industrix-com-br/tia-portal-code-agent)
-- [Installation Guide](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/INSTALLATION.md)
+- [GitHub repository](https://github.com/industrix-com-br/tia-portal-code-agent)
+- [Installation guide](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/INSTALLATION.md)
+- [CLI reference](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/CLI.md)
 - [Troubleshooting](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/TROUBLESHOOTING.md)
-- [Security Model](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/spec/SECURITY_MODEL.md)
+- [Security model](https://github.com/industrix-com-br/tia-portal-code-agent/blob/main/docs/spec/SECURITY_MODEL.md)
 
 ## License
 

@@ -1,383 +1,163 @@
-# Running TIA Portal Code Agent End-to-End
+# Running End-to-End
 
-Step-by-step guide for running the full system. Prerequisites are assumed installed.
-
-## Quick Start (TL;DR)
-
-```powershell
-cd C:\github\tia-portal-code-agent
-
-# 1. Build, test, package, install
-.\build.ps1 test
-.\build.ps1 install-dev
-
-# 2. Start all services with Runtime Supervisor
-.\src\runtime\Scripts\run.ps1
-
-# 3. In TIA Portal: Options > Settings > Add-Ins > activate "TIA Portal Code Agent"
-# 4. Right-click a PLC block > AI Assistant > Explain selected object
-```
+This guide covers the current source-build workflow and the installed CLI workflow.
 
 ## Prerequisites
 
-| Component | Version | Check |
-|---|---|---|
-| Windows | 10/11 x64 | - |
-| TIA Portal V21 | With Openness | `C:\Program Files\Siemens\Automation\Portal V21` |
-| .NET SDK | 8.0+ | `dotnet --version` |
-| .NET Framework | 4.8 | Registry: `HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full` (Release >= 528040) |
-| TiaMcpServer | 2.3.1+ | `dotnet tool list -g` shows `tiamcpserver` |
-| **One agent runtime** | latest | See [Supported Runtimes](#supported-runtimes) below |
-| Openness group | Member of `Siemens TIA Openness` | Check via `whoami /groups` |
+- Windows x64;
+- TIA Portal V21 with Openness;
+- membership in `Siemens TIA Openness`;
+- .NET SDK compatible with `global.json`;
+- .NET Framework 4.8 runtime;
+- `TiaMcpServer` and at least one supported agent runtime.
 
-### Supported Runtimes
+Run these checks before troubleshooting the application:
 
-At least one agent runtime must be installed. The Bridge supports three interchangeable runtimes:
+```powershell
+dotnet --version
+tia-mcp doctor
+opencode --version   # or mimo --version / claude --version
+```
 
-| Runtime | ID | Install | Check |
-|---|---|---|---|
-| Mimo CLI | `mimo` | `npm install -g @mimo-ai/cli` | `mimo --version` |
-| OpenCode | `opencode` | `npm install -g opencode` | `opencode --version` |
-| Claude Code CLI | `claude` | `npm install -g @anthropic-ai/claude-code` | `claude --version` |
-
-The default runtime is `opencode`. To change it, edit `%LOCALAPPDATA%\TiaAgent\config.json` or set the `TIA_AGENT_RUNTIME` environment variable. See [docs/RUNTIME.md](RUNTIME.md) for full configuration details.
-
-## Step 1: Build and Test
+## Build from source
 
 ```powershell
 cd C:\github\tia-portal-code-agent
-
-# Build and test
 .\build.ps1 build
 .\build.ps1 test
-
-# Package Add-In, payload, and NuGet tool
 .\build.ps1 pack
 ```
 
-Expected output:
-- Build: 0 errors
-- Tests: All tests passed
-- Pack: `artifacts\TiaAgent-0.0.0-dev.addin` and `TiaAgent.Cli.0.0.0-dev.nupkg` created
+`pack` creates:
 
-## Step 2: Install the Add-In
+- `artifacts\TiaAgent-0.0.0-dev.addin` for an untagged development build;
+- `artifacts\TiaAgent.Cli.0.0.0-dev.nupkg`;
+- `artifacts\cli-payload\` used by the package.
+
+Install the development Add-In directly with:
 
 ```powershell
 .\build.ps1 install-dev
 ```
 
-This copies the `.addin` file to:
-```
-%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\
-```
+Restart TIA Portal after deployment.
 
-If the folder doesn't exist, TIA Portal creates it on first launch.
+## Install through the CLI
 
-## Step 3: Verify tia-mcp
+For a published package:
 
 ```powershell
-# Check it's installed
-dotnet tool list -g
-
-# Validate TIA environment
-tia-mcp doctor
+dotnet tool install --global TiaAgent.Cli --prerelease
+tia-agent install
 ```
 
-`tia-mcp` uses **stdio transport** -- it's launched automatically by the agent runtime when MCP tools are called. No separate process needed.
+For the payload produced by the local build:
 
-## Step 4: Configure the Runtime (Optional)
-
-The runtime configuration file is at `%LOCALAPPDATA%\TiaAgent\config.json`. If it doesn't exist, the Bridge uses `opencode` as the default runtime.
-
-```json
-{
-  "defaultRuntime": "opencode",
-  "runtimes": {
-    "mimo": { "enabled": true, "executable": "mimo" },
-    "opencode": { "enabled": true, "mode": "server", "executable": "opencode" },
-    "claude": { "enabled": true, "executable": "claude" }
-  }
-}
-```
-
-You can also override the runtime per-task or via environment variable:
 ```powershell
-$env:TIA_AGENT_RUNTIME = "claude"
+tia-agent install --payload-dir .\artifacts\cli-payload --force
 ```
 
-See [docs/RUNTIME.md](RUNTIME.md) for all configuration options.
+## Configure the runtime
 
-## Step 5: Start All Services
+```powershell
+tia-agent runtime list
+tia-agent runtime use opencode --mode server
+```
 
-### Option A: Runtime Supervisor (Recommended)
+Examples:
 
-The Runtime Supervisor starts and manages all services with a single command. It is runtime-aware: it reads `config.json` to determine which runtime to start, and only launches a server process when the selected runtime is in server mode.
+```powershell
+tia-agent runtime use claude --mode cli
+tia-agent runtime use mimo --mode cli
+tia-agent config set runtimes.claude.executable C:\tools\claude.cmd
+```
+
+The main configuration file is `%LOCALAPPDATA%\TiaAgent\config.json`. See [CONFIGURATION.md](CONFIGURATION.md) for all configuration files and [RUNTIME.md](RUNTIME.md) for runtime behavior.
+
+## Start services
+
+Preferred user-facing commands:
+
+```powershell
+tia-agent start
+tia-agent status
+```
+
+The Runtime Supervisor always starts the Bridge. It starts an additional runtime server only when the selected runtime uses server mode.
+
+For source-level debugging, equivalent repository scripts exist under `src\runtime\Scripts\`:
 
 ```powershell
 .\src\runtime\Scripts\run.ps1
-```
-
-This will:
-1. Validate prerequisites (including the selected runtime)
-2. Allocate ports (Bridge: 43119)
-3. Start the Bridge process
-4. If the runtime is in **server mode**: start the runtime server and wait for health
-5. If the runtime is in **CLI mode**: verify the executable is available (no server needed)
-6. Monitor service health
-7. Publish a runtime manifest for service discovery
-
-**Available commands:**
-
-```powershell
-# Start and monitor all services
-.\src\runtime\Scripts\run.ps1
-
-# Check runtime status
 .\src\runtime\Scripts\status.ps1
-
-# JSON status for automation
-.\src\runtime\Scripts\status.ps1 -Json
-
-# Stop all services gracefully
 .\src\runtime\Scripts\stop.ps1
-
-# Force stop (skip graceful shutdown)
-.\src\runtime\Scripts\stop.ps1 -Force
 ```
 
-**Runtime Directory:**
+The CLI commands should remain the primary documentation because they work independently of a repository checkout.
 
-All runtime data is stored in `%LOCALAPPDATA%\TiaAgent\`:
+## Activate and use the Add-In
 
-```
-%LOCALAPPDATA%\TiaAgent\
-├── config.json              # Runtime selection configuration
-├── config\settings.json     # Supervisor configuration
-├── runtime\runtime.json     # Service discovery manifest
-├── runtime\secrets\         # Transient credentials
-├── logs\                    # Service logs
-└── scripts\                 # Runtime scripts
-```
+1. Open TIA Portal V21 and a project.
+2. Open **Options > Settings > Add-Ins**.
+3. Enable **TIA Portal Code Agent**.
+4. Right-click a supported project object.
+5. Choose an action under **AI Code Agent**:
+   - **Explain selected object**;
+   - **Review selected object**;
+   - **Propose change**.
 
-### Option B: Manual Startup (Legacy)
+The current proposal workflow returns recommendations. It does not directly modify the project.
 
-If you need to start services individually:
+## Runtime discovery
 
-```powershell
-# Start TiaAgent.Bridge (port 43119)
-dotnet run --project src/TiaAgent.Bridge --configuration Release
+The Add-In reads:
 
-# If using OpenCode in server mode (port 43120):
-opencode serve --port 43120
+```text
+%LOCALAPPDATA%\TiaAgent\runtime\runtime.json
 ```
 
-For CLI-mode runtimes (mimo, claude), no server process is needed. The Bridge spawns the runtime process for each task.
+The manifest contains the active Bridge endpoint and runtime metadata. It is discovery metadata, not proof that a service is healthy; consumers also call the health endpoint.
 
-## Step 6: Activate the Add-In in TIA Portal
-
-1. Open TIA Portal V21
-2. Open a project with a PLC
-3. Go to **Options > Settings > Add-Ins**
-4. Enable **"TIA Portal Code Agent"**
-5. Confirm any permission prompts
-
-## Step 7: Use It
-
-Right-click any object in the project tree:
-
-- **AI Assistant > Explain selected object** -- read-only explanation
-- **AI Assistant > Review selected object** -- reads + suggestions
-- **AI Assistant > Propose change** -- reads + change proposal (MVP: read-only)
-
-The Add-In sends the task to the Bridge (port 43119), which resolves the configured runtime and forwards the task. The runtime launches `tia-mcp` to read from TIA Portal via Openness.
-
-The task response includes which runtime executed it (e.g. `[Runtime: claude]`).
-
-## Service Discovery
-
-The Add-In discovers services via the runtime manifest:
-
-1. Reads `%LOCALAPPDATA%\TiaAgent\runtime\runtime.json`
-2. Validates the schema version and status
-3. Calls the service's health endpoint before use
-
-The manifest includes runtime information:
-```json
-{
-  "status": "ready",
-  "runtime": {
-    "id": "claude",
-    "displayName": "Claude Code CLI",
-    "mode": "cli",
-    "healthy": true
-  },
-  "services": {
-    "bridge": { "status": "healthy", "port": 43119 }
-  }
-}
-```
-
-**Important:** `runtime.json` is discovery metadata, not proof of service health. Always validate the health endpoint.
+The default Bridge port is `43119`, but the supervisor can select another available port. Do not hard-code the default port in automation when `runtime.json` is available.
 
 ## Bridge API
 
-The Bridge exposes these endpoints:
+The current Bridge exposes local endpoints for:
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/health` | No | Bridge + runtime health |
-| `POST` | `/v1/tasks` | Bearer | Create a task (may include `"runtime": "claude"`) |
-| `GET` | `/v1/tasks/{id}` | Bearer | Poll task status (includes `runtimeId`) |
-| `POST` | `/v1/tasks/{id}/cancel` | Bearer | Cancel a task |
-| `GET` | `/api/runtimes` | Bearer | List all runtimes with availability |
-| `GET` | `/api/runtimes/{id}/health` | Bearer | Check specific runtime health |
-| `GET` | `/api/settings/runtime` | Bearer | Get default runtime |
-| `PUT` | `/api/settings/runtime` | Bearer | Change default runtime |
-| `GET` | `/diagnostics` | Bearer | Bridge diagnostics |
-
-## Troubleshooting
-
-### Runtime Supervisor
-
-Check if the runtime is running:
-```powershell
-.\src\runtime\Scripts\status.ps1
-```
-
-View supervisor logs:
-```powershell
-Get-Content "$env:LOCALAPPDATA\TiaAgent\logs\supervisor.log" -Tail 50
-```
-
-### Bridge not running
-
-The Add-In requires TiaAgent.Bridge to be running on port 43119. If you see "The local TIA Agent Bridge is not running", start the supervisor:
-
-```powershell
-.\src\runtime\Scripts\run.ps1
-```
-
-### Runtime not found
-
-```
-Unknown runtime 'xyz'. Available runtimes: mimo, opencode, claude
-```
-
-Check the runtime ID in your config or task request. Run `.\src\runtime\Scripts\status.ps1` to see available runtimes.
-
-### Runtime unavailable
-
-```
-Selected runtime `mimo` is unavailable.
-Executable: mimo
-Reason: executable not found
-```
-
-Install the runtime CLI or update the `executable` path in `%LOCALAPPDATA%\TiaAgent\config.json`.
-
-### Add-In not showing in TIA Portal
-
-- Ensure TIA Portal was restarted after install
-- Check `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\` contains the `.addin` file
-- Check the log: `%LOCALAPPDATA%\TiaAgent\addin.log`
-
-### Port 43119 already in use (Bridge)
-
-```powershell
-netstat -ano | Select-String ":43119"
-# Kill the process using that port
-```
-
-The Runtime Supervisor will automatically allocate a different port from the configured range (43100-43200).
-
-### tia-mcp fails to connect to TIA Portal
-
-```powershell
-tia-mcp doctor
-```
-
-Common issues:
-- TIA Portal not open
-- No project loaded
-- User not in `Siemens TIA Openness` group
-- TIA Portal version mismatch
-
-### Agent not responding
-
-Check if services are healthy:
-```powershell
-# Check Bridge health (includes runtime info)
-Invoke-RestMethod -Uri "http://127.0.0.1:43119/health"
-
-# List runtimes and their availability
-$token = Get-Content "$env:LOCALAPPDATA\TiaAgent\runtime\secrets\bridge.token"
-$headers = @{ Authorization = "Bearer $token" }
-Invoke-RestMethod -Uri "http://127.0.0.1:43119/api/runtimes" -Headers $headers
-```
-
-If services are down, restart the supervisor:
-```powershell
-.\src\runtime\Scripts\stop.ps1
-.\src\runtime\Scripts\run.ps1
-```
-
-### Silent fallback disabled
-
-If the selected runtime fails, the Bridge does **not** automatically switch to another runtime. You will see an actionable error listing available alternatives. To use a different runtime, either:
-
-- Set `TIA_AGENT_RUNTIME` environment variable, or
-- Edit `%LOCALAPPDATA%\TiaAgent\config.json`, or
-- Include `"runtime": "claude"` in the task request
-
-## Logs
-
-| Log | Path | Contents |
+| Method | Path | Purpose |
 |---|---|---|
-| Supervisor log | `%LOCALAPPDATA%\TiaAgent\logs\supervisor.log` | Startup, shutdown, health checks, errors |
-| Add-In log | `%LOCALAPPDATA%\TiaAgent\addin.log` | Action triggers, Bridge client calls, results |
-| Bridge log | `%LOCALAPPDATA%\TiaAgent\logs\bridge.log` | Task lifecycle, runtime calls, errors |
+| `GET` | `/health` | Bridge and selected-runtime health |
+| `POST` | `/v1/tasks` | Create a task |
+| `GET` | `/v1/tasks/{id}` | Poll task status |
+| `POST` | `/v1/tasks/{id}/cancel` | Cancel a task |
+| `GET` | `/api/runtimes` | List runtime availability |
+| `GET` | `/api/runtimes/{id}/health` | Diagnose one runtime |
+| `GET` | `/api/settings/runtime` | Read the default runtime |
+| `PUT` | `/api/settings/runtime` | Change the default runtime |
+| `GET` | `/diagnostics` | Bridge diagnostics |
 
-## Architecture Flow
+Authenticated endpoints use the bearer token stored in `%LOCALAPPDATA%\TiaAgent\bridge.token`. Do not log, commit, or publish that token.
 
-```
-User right-clicks object in TIA Portal
-    |
-    v
-Add-In (TiaAgent.AddIn) -- captures selection, creates BridgeTaskRequest
-    |
-    v (HTTP on port 43119)
-TiaAgent.Bridge -- task management, runtime resolution
-    |
-    v (IAgentRuntime abstraction)
-    +--- MimoCliRuntime (mimo run --format json)
-    +--- OpenCodeRuntime (HTTP server or opencode run)
-    +--- ClaudeCodeRuntime (claude -p --output-format json)
-    |
-    v (stdio, spawned as child process)
-tia-mcp (Czarnak/tia-portal-mcp) -- MCP server
-    |
-    v (.NET Openness SDK)
-TIA Portal Openness -- reads project data
-    |
-    v (results flow back up the chain)
-Add-In displays result in AssistantPanel or popup
+## Verify the system
+
+```powershell
+tia-agent doctor --verbose
+tia-agent status
+tia-agent runtime doctor
 ```
 
-## Key Files
+Relevant logs:
 
-| File | Purpose |
-|---|---|
-| `build.ps1` | Build, test, pack, install commands |
-| `TiaAgent.sln` | Solution with 5 source + 5 test projects |
-| `src\runtime\Scripts\run.ps1` | Runtime Supervisor - start all services |
-| `src\runtime\Scripts\stop.ps1` | Runtime Supervisor - stop all services |
-| `src\runtime\Scripts\status.ps1` | Runtime Supervisor - check status |
-| `%LOCALAPPDATA%\TiaAgent\config.json` | Runtime selection configuration |
-| `config\opencode.json` | Agent runtime + MCP configuration |
-| `config\settings.example.json` | Supervisor settings template |
-| `config\bridge.example.json` | Bridge configuration example |
-| `agents\tia-explain.md` | Read-only agent profile |
-| `agents\tia-review.md` | Review agent profile |
-| `agents\tia-change.md` | Change agent profile |
-| `docs\RUNTIME.md` | Runtime configuration guide |
-| `docs\spec\ARCHITECTURE.md` | Authoritative architecture contract |
+```text
+%LOCALAPPDATA%\TiaAgent\logs\supervisor.log
+%LOCALAPPDATA%\TiaAgent\logs\bridge.log
+%LOCALAPPDATA%\TiaAgent\logs\addin-YYYYMMDD.log
+```
+
+## Stop services
+
+```powershell
+tia-agent stop
+```
+
+Use [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common failures and [CLI.md](CLI.md) for all implemented command syntax.

@@ -1,247 +1,142 @@
 # Runtime Configuration
 
-The TIA Agent Bridge supports multiple interchangeable coding agent runtimes. The user selects which agent CLI should process TIA Portal tasks without changing the Add-In, MCP contracts, or engineering services.
+The Bridge supports three interchangeable coding-agent runtimes. Runtime selection does not change the Add-In or the task contract.
 
 ## Supported runtimes
 
-| Runtime | ID | Mode | Description |
-|---|---|---|---|
-| Mimo CLI | `mimo` | CLI | Non-interactive execution via `mimo run --format json` |
-| OpenCode | `opencode` | Server or CLI | Server mode (default): HTTP API to `opencode serve`. CLI mode: `opencode run` |
-| Claude Code CLI | `claude` | CLI | Non-interactive execution via `claude -p --output-format json` |
+| Runtime | ID | Supported mode |
+|---|---|---|
+| Mimo CLI | `mimo` | CLI |
+| OpenCode | `opencode` | Server or CLI |
+| Claude Code CLI | `claude` | CLI |
 
-## Architecture
-
-```text
-TIA Portal Add-In
-        |  IAgentBridgeClient (HTTP)
-        v
-TiaAgent Bridge
-        |  IAgentRuntime (abstraction)
-        +---------------------+
-        |                     |
-        v                     v
-MimoCliRuntime      OpenCodeRuntime    ClaudeCodeRuntime
-(Process CLI)       (HTTP or CLI)      (Process CLI)
-        |                     |
-        | MCP (via agent's own config) |
-        v                     v
-TiaAgent MCP Server (tia-mcp, unchanged)
-        |
-        v
-TIA Portal Openness (unchanged)
-```
-
-The Add-In communicates exclusively with the Bridge. It has no direct dependency on any runtime.
+The runtime executable must be available on `PATH` or configured with an explicit path.
 
 ## Configuration file
 
-**Path:** `%LOCALAPPDATA%\TiaAgent\config.json`
+Path:
+
+```text
+%LOCALAPPDATA%\TiaAgent\config.json
+```
+
+Example:
 
 ```json
 {
   "defaultRuntime": "opencode",
+  "updateChannel": "stable",
   "runtimes": {
     "mimo": {
       "enabled": true,
-      "executable": "mimo"
+      "executable": "mimo",
+      "mode": "cli"
     },
     "opencode": {
       "enabled": true,
-      "mode": "server",
       "executable": "opencode",
+      "mode": "server",
       "serverUrl": "http://127.0.0.1:43120"
     },
     "claude": {
       "enabled": true,
-      "executable": "claude"
+      "executable": "claude",
+      "mode": "cli"
     }
   }
 }
 ```
 
-### Fields
+Implemented fields:
 
-- **`defaultRuntime`** — The runtime ID to use when no override is specified. Default: `"opencode"`.
-- **`runtimes.<id>.enabled`** — Whether this runtime is available for selection. Default: `true`.
-- **`runtimes.<id>.executable`** — Path to the runtime executable. If omitted, the runtime is expected to be on PATH.
-- **`runtimes.<id>.mode`** — `"server"` or `"cli"`. Only relevant for OpenCode. Default: `"server"`.
-- **`runtimes.<id>.serverUrl`** — Server URL for server mode. Default: `"http://127.0.0.1:43120"`.
-- **`runtimes.<id>.environment`** — Additional environment variables for the runtime process.
+- `defaultRuntime` — runtime used when no request or environment override exists; default `opencode`.
+- `updateChannel` — `stable`, `rc`, `beta`, or `alpha`; default `stable`.
+- `runtimes.<id>.enabled` — whether the runtime is selectable.
+- `runtimes.<id>.executable` — executable name or path.
+- `runtimes.<id>.mode` — `server` or `cli`, limited by the selected adapter.
+- `runtimes.<id>.serverUrl` — HTTP endpoint used by server mode.
+- `runtimes.<id>.environment` — extra process environment values. This field is supported by the configuration model but is not exposed by the current `tia-agent config set` command.
 
-## Runtime selection precedence
+## Selection precedence
 
-1. **Request override** — The `runtime` field in a task request takes highest precedence.
-2. **Environment variable** — `TIA_AGENT_RUNTIME=mimo|opencode|claude`
-3. **Configuration file** — `defaultRuntime` in `config.json`
-4. **Hardcoded default** — `"opencode"` if nothing else is configured.
+1. `runtime` in the task request;
+2. `TIA_AGENT_RUNTIME` environment variable;
+3. `defaultRuntime` in `config.json`;
+4. `opencode`.
 
-There is **no silent fallback**. If the selected runtime is unavailable, the Bridge returns an actionable error:
+The Bridge does not silently fall back to another runtime. An unavailable selected runtime produces an explicit error.
 
-```text
-Selected runtime `mimo` is unavailable.
+## CLI configuration
 
-Executable: mimo
-Reason: executable not found
-Available runtimes: opencode, claude
+```powershell
+tia-agent runtime list
+tia-agent runtime use opencode --mode server
+tia-agent runtime use claude --mode cli
+tia-agent runtime doctor
+tia-agent runtime doctor claude
+tia-agent runtime status
 ```
 
-## CLI vs Server modes
+Configuration values can also be managed directly:
 
-### CLI mode (mimo, claude, opencode with `mode: "cli"`)
-
-The Bridge spawns a process for each task:
-- `mimo run "<prompt>" --format json --agent <agentId> --never-ask --trust`
-- `claude -p "<prompt>" --output-format json --mcp-config <file> --dangerously-skip-permissions --no-session-persistence`
-- `opencode run "<prompt>" --format json --agent <agentId>`
-
-No server process is needed. The runtime supervisor skips starting a server when the configured runtime is in CLI mode.
-
-### Server mode (opencode with `mode: "server"`)
-
-The Bridge communicates with a running OpenCode server via HTTP:
-- The runtime supervisor starts `opencode serve --port <port>`
-- The Bridge sends requests to the server's API endpoints
-- Sessions are managed by the server
-
-## Bridge API endpoints
-
-### Runtime management
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/runtimes` | List all registered runtimes with availability status |
-| `GET` | `/api/runtimes/{id}/health` | Check specific runtime health |
-| `GET` | `/api/settings/runtime` | Get current default runtime |
-| `PUT` | `/api/settings/runtime` | Set default runtime (persists to config.json) |
-
-### Task execution (existing, updated)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/tasks` | Create a task. Body may include `"runtime": "claude"` to override. |
-| `GET` | `/v1/tasks/{taskId}` | Get task status. Response includes `runtimeId` and `runtimeVersion`. |
-| `POST` | `/v1/tasks/{taskId}/cancel` | Cancel a task. |
-
-### Task request with runtime override
-
-```json
-{
-  "action": "explain",
-  "runtime": "claude",
-  "correlationId": "tia-abc123",
-  "agentId": "tia-explain",
-  "userMessage": "Explain this OB block"
-}
+```powershell
+tia-agent config list
+tia-agent config get defaultRuntime
+tia-agent config set defaultRuntime claude
+tia-agent config set runtimes.claude.executable C:\tools\claude.cmd
+tia-agent config set runtimes.opencode.mode server
+tia-agent config set runtimes.opencode.serverUrl http://127.0.0.1:43120
 ```
 
-The `runtime` property may be omitted to use the configured default.
+The current `config set` implementation supports `enabled`, `executable`, `mode`, and `serverUrl` for runtime entries.
 
-## Prerequisites
+## Execution modes
 
-Each runtime requires its CLI to be installed and available on PATH (or configured with an explicit executable path):
+### CLI mode
 
-- **mimo**: `npm install -g @mimo-ai/cli` (or equivalent)
-- **opencode**: `npm install -g opencode` (or equivalent)
-- **claude**: `npm install -g @anthropic-ai/claude-code` (or equivalent)
+The Bridge starts a runtime process for each task. Mimo and Claude support only this mode in the current registry. OpenCode may also use CLI mode.
 
-The MCP server (`tia-mcp`) is required for all runtimes. Install with:
-```bash
-dotnet tool install -g TiaMcpServer
-```
+### Server mode
+
+OpenCode may run as a local HTTP server. The Runtime Supervisor starts the server and waits for health before publishing the runtime manifest.
+
+All services must remain bound to loopback.
 
 ## MCP integration
 
-All runtimes receive the same MCP configuration pointing to `tia-mcp`. The MCP tools are identical regardless of which runtime is used:
+Each runtime is configured to invoke the external `TiaMcpServer` integration through stdio. This repository does not implement a second TIA Portal MCP server.
 
-- Read operations: `browse_project_tree`, `get_block_content`, `list_tag_tables`, etc.
-- Write operations: `preview_write_batch`, `apply_write_batch` (with safety tokens)
-- Project lifecycle: `open_project`, `save_project`, `close_project`, etc.
+The upstream MCP package may expose read and write tools. The current TIA Portal Code Agent product workflow supports reads, reviews, and change proposals only. The Add-In does not implement a user approval and apply workflow, so direct project writes must not be documented as supported behavior.
 
-For Claude Code, the Bridge generates an MCP configuration file at runtime pointing to `tia-mcp` via stdio transport.
+## Runtime manifest
 
-## Startup flow
+The supervisor publishes:
 
-The runtime supervisor (`run.ps1`) follows this flow:
-
-1. Load `config.json` to determine the selected runtime
-2. Start the Bridge (always)
-3. If the runtime is in **server mode**: start the runtime server and wait for health
-4. If the runtime is in **CLI mode**: verify the executable is available (no server needed)
-5. Publish runtime manifest with runtime metadata
-6. Monitor processes
-
-## Status file
-
-The runtime manifest (`runtime.json`) includes runtime information:
-
-```json
-{
-  "schemaVersion": 1,
-  "instanceId": "...",
-  "status": "ready",
-  "runtime": {
-    "id": "claude",
-    "displayName": "Claude Code CLI",
-    "mode": "cli",
-    "healthy": true
-  },
-  "services": {
-    "bridge": { "status": "healthy", "port": 43119 },
-    "opencode": { "status": "skipped" }
-  }
-}
+```text
+%LOCALAPPDATA%\TiaAgent\runtime\runtime.json
 ```
 
-## Adding a new runtime adapter
+The manifest records the active Bridge endpoint, selected runtime, process metadata, and status. Consumers must still call a health endpoint because the file may outlive a failed process.
 
-To add a new runtime:
+## Adding a runtime adapter
 
-1. Create a class implementing `IAgentRuntime` in `src/TiaAgent.Bridge/Runtime/`
-2. Register it in `Program.RegisterRuntimes()`
-3. Add its ID to `RuntimeConfigLoader.KnownRuntimes`
-4. Update the supervisor scripts if it needs a server process
-5. Add tests using `FakeRuntime` as a pattern
-6. Update this documentation
+A new adapter requires:
 
-The runtime adapter must:
-- Use `ProcessStartInfo` with `UseShellExecute = false` and redirected streams
-- Support cancellation via `CancellationToken`
-- Enforce configurable timeouts
-- Strip ANSI escape codes at the presentation boundary
-- Return structured `AgentTaskResult` with success/failure, response text, and runtime metadata
+1. an `IAgentRuntime` implementation under `src/TiaAgent.Bridge/Runtime/`;
+2. registration in the Bridge startup code;
+3. compatibility metadata in `RuntimeCompatibilityRegistry`;
+4. supervisor changes when a server process is required;
+5. runtime and task tests;
+6. updates to this document and [CLI.md](CLI.md).
 
-## Troubleshooting
+Adapters must support cancellation and bounded timeouts, avoid shell execution when possible, preserve output encoding, and return structured task results.
 
-### Runtime not found
+## Diagnostics
 
-```
-Unknown runtime 'xyz'. Available runtimes: mimo, opencode, claude
+```powershell
+tia-agent runtime doctor
+tia-agent doctor --verbose
+tia-agent status
 ```
 
-Check that the runtime ID is correct and the adapter is registered in the Bridge.
-
-### Runtime unavailable
-
-```
-Selected runtime `mimo` is unavailable.
-Executable: mimo
-Reason: executable not found
-```
-
-Install the runtime CLI or update the `executable` path in `config.json`.
-
-### Server health check failed
-
-The runtime server (OpenCode in server mode) failed to respond to health checks. Check:
-- The server is installed (`opencode --version`)
-- The port is not in use
-- The server logs (`%LOCALAPPDATA%\TiaAgent\logs\opencode.log`)
-
-## Security considerations
-
-- Runtime processes run with the same permissions as the Bridge
-- No secrets are passed via command-line arguments when avoidable
-- The MCP server uses the same authentication mechanism regardless of runtime
-- `--dangerously-skip-permissions` is used for Claude Code in non-interactive mode only
-- All runtime communication is local (127.0.0.1)
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for log paths and common failures.

@@ -1,102 +1,99 @@
 # Compatibility Policy
 
-Product version and Siemens TIA Portal compatibility are independent dimensions.
+Product version and Siemens TIA Portal compatibility are separate dimensions.
 
 ```text
-Product version: TIA Portal Code Agent release, for example 0.2.0-beta.1
+Product version: TIA Portal Code Agent release, for example 0.3.0-beta.1
 TIA compatibility: validated Siemens environment, for example TIA Portal V21 / Openness V21
 ```
 
-A product version must not encode the TIA Portal version in its SemVer number.
+The SemVer product version must not encode the TIA Portal version.
 
-## Current compatibility baseline
-
-The current engineering and validation baseline is:
+## Current baseline
 
 | Dimension | Baseline |
 |---|---|
 | TIA Portal | V21 |
-| TIA Portal Openness | V21 Public API |
-| Add-In target | TIA Portal V21 |
-| Host operating system | Windows versions supported by the selected TIA Portal V21 installation |
+| Openness | V21 Public API |
+| Add-In host | TIA Portal V21, .NET Framework 4.8, x64 |
+| Bridge and CLI | .NET 8, Windows x64 |
+| Operating system | Windows versions supported by the validated V21 installation |
 
-This baseline is a policy declaration, not evidence that every V21 edition, update, language pack, hardware catalog, or project type has been tested.
+This baseline does not prove compatibility with every V21 edition, update, language pack, hardware catalog, license combination, or project type.
 
-## Compatibility matrix requirements
+## Release compatibility evidence
 
-Every public release must publish a matrix containing at least:
+Each public release should record:
 
-- product version;
-- release channel;
-- TIA Portal major version and tested update level;
-- Openness API version;
-- supported Add-In host version;
-- supported operating-system baseline;
+- product version and channel;
+- exact TIA Portal V21 update/build;
+- Openness and Add-In Publisher assembly versions;
+- Windows version;
 - installation mode;
+- TiaMcpServer version;
+- tested coding-agent runtime and version;
+- tested object and language coverage;
 - known limitations;
-- validation status: `supported`, `experimental`, or `unsupported`.
+- validation status.
 
-Definitions:
+Use:
 
-- `supported`: validated by the release process and eligible for normal defect support;
-- `experimental`: expected to work but not fully validated; no production guarantee;
-- `unsupported`: intentionally blocked, known incompatible, or outside the tested boundary.
+- `supported` for a repeatably validated combination;
+- `experimental` for an incomplete validation boundary;
+- `unsupported` for intentionally blocked, known-incompatible, or untested behavior that must not be implied as available.
 
-## Component compatibility
+The repository does not currently generate this matrix automatically. Missing evidence is tracked in [KNOWN_UNKNOWNS.md](spec/KNOWN_UNKNOWNS.md).
 
-CLI, Bridge, Add-In, MCP host, contracts, and installer payload from one release are version-aligned and form one supported unit.
+## First-party component compatibility
 
-- Mixing components from different product versions is unsupported by default.
-- A protocol handshake must reject known-incompatible versions rather than continue silently.
-- Protocol or manifest schema versions may evolve independently, but each product release must declare which revisions it implements.
-- Diagnostics should report product version, component version, protocol/schema revision, TIA Portal version, and Openness version separately.
+The CLI, Bridge, Add-In, contracts, application library, and installation payload from one product release share one product version and form the first-party compatibility unit.
+
+- Mixing first-party artifacts from different product versions is unsupported unless explicitly validated.
+- Protocol and manifest schema versions may evolve independently, but each product release must declare the revisions it implements.
+- Diagnostics should report product version, component version, protocol or schema revision, TIA Portal version, and Openness version separately.
+
+`TiaMcpServer`, Mimo, OpenCode, and Claude Code are external dependencies. They do not share the product version and require a separately tested compatibility record.
 
 ## TIA Portal support changes
 
-Adding support for another TIA Portal major version is a compatibility feature and normally requires a MINOR release.
+Adding another TIA Portal major version is a compatibility feature and normally requires a MINOR release. Removing a supported major version is a breaking compatibility change.
 
-Removing a previously supported TIA Portal major version is a breaking change:
-
-- before `1.0.0`, it requires a MINOR release and explicit migration guidance;
-- at or after `1.0.0`, it requires a MAJOR release unless the removed version was already formally end-of-support.
-
-A newer TIA Portal version is not automatically supported merely because assemblies load or basic operations succeed.
+A newer TIA Portal release is not supported merely because assemblies load or a basic action succeeds. It requires build, package, installation, selection, UI, runtime, and source-extraction validation.
 
 ## Update levels
 
-Compatibility should be validated against explicit TIA Portal update levels when Siemens updates may affect Add-In or Openness behavior. When only the major version is declared, the release notes must identify the exact environment used for validation.
+Compatibility should be recorded against an exact TIA Portal update level when Siemens updates can affect Add-In loading, permissions, packaging, or Openness behavior. When only V21 is stated, documentation must describe the result as a baseline rather than a complete support matrix.
 
-## Project compatibility
+## Project-feature compatibility
 
-Compatibility with TIA Portal does not imply compatibility with every project feature. Release notes must identify limitations involving, where relevant:
+Compatibility with the V21 host does not imply compatibility with every project feature. Release evidence should identify limitations involving:
 
-- Safety projects;
-- WinCC or WinCC Unified;
-- hardware and network configuration;
+- supported selection types and PLC languages;
 - protected or know-how-protected blocks;
-- multiuser or Teamcenter workflows;
-- project upgrades from older TIA versions;
-- download to controllers;
-- unsupported object types in Openness.
+- WinCC and WinCC Unified objects;
+- Safety projects;
+- multiuser, VCI, or Teamcenter projects;
+- project upgrades;
+- hardware catalogs and licensed option packages.
 
-Unsupported operations must fail explicitly and must not degrade into unsafe best-effort writes.
+Direct writes, downloads, Safety changes, hardware/network changes, and other operations outside the current product workflow remain unsupported even if the underlying Siemens API exposes them.
 
 ## Upgrade compatibility
 
-A supported in-place upgrade requires both:
+A supported product upgrade requires:
 
-1. product-version compatibility as defined in `docs/RELEASING.md`; and
-2. compatibility with the installed TIA Portal/Openness environment.
+1. product-version compatibility as defined in [RELEASING.md](RELEASING.md); and
+2. compatibility with the installed TIA Portal and Openness environment.
 
-Changing the TIA Portal major version and the product version simultaneously should be treated as a higher-risk migration and validated as a separate scenario.
+Changing the product version and TIA Portal major version in one migration is higher risk and must be validated as a separate scenario.
 
-## Evidence and claims
+## Claim rule
 
-Compatibility claims must be based on repeatable validation, not inference. Documentation should distinguish:
+Compatibility claims must distinguish:
 
-- officially validated behavior;
-- behavior inherited from Siemens documentation;
+- behavior validated by this repository;
+- API capability inherited from Siemens documentation;
 - experimental observations;
 - unsupported assumptions.
 
-Future roadmap work may automate matrix generation and diagnostics, but those implementations must conform to this policy.
+Do not convert API availability or an upstream dependency claim into a supported product claim without repeatable end-to-end evidence.

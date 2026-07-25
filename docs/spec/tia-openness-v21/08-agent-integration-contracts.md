@@ -1,246 +1,152 @@
 # Agent-facing integration contracts for TIA Portal V21
 
-## 1. Architectural position
+## Purpose
 
-This project uses the following separation:
+This document describes how the current product connects TIA Portal context to coding-agent runtimes. It does not define an in-repository MCP server or a project-mutation service layer.
 
-```text
-TIA Add-In = UI integration, selection context and TIA-local capability host
-MCP       = typed tool contract
-Agent runtime = planning, model interaction and orchestration
-```
-
-All Openness access MUST be centralized in a TIA integration layer. Add-In commands and MCP handlers call the same services.
+## Current topology
 
 ```text
-Add-In command handlers ─┐
-                         ├── TIA application services ── Siemens V21 API
-MCP tool handlers ───────┘
+TIA Portal V21
+  -> TiaAgent.AddIn
+    -> selected-object SelectionSnapshot
+      -> authenticated loopback Bridge task
+        -> Mimo, OpenCode, or Claude Code runtime
+          -> external TiaMcpServer / tia-mcp over stdio
+            -> TIA Portal Openness
 ```
 
-## 2. Layer boundaries
+Current boundaries:
 
-### 2.1 Siemens adapter layer
+- `TiaAgent.AddIn` owns the TIA context-menu integration and captures the initiating selection.
+- `TiaAgent.Contracts` defines serializable task and runtime contracts.
+- `TiaAgent.Bridge` owns task lifecycle, authentication, runtime selection, and adapter execution.
+- `TiaMcpServer` is an external dependency that owns additional Openness access exposed through MCP.
+- This repository does not implement MCP tool handlers or a second Openness host.
 
-Responsibilities:
+## Selection snapshot contract
 
-- own live Siemens objects;
-- attach/start TIA Portal;
-- navigate the EOM;
-- obtain services;
-- execute operations;
-- translate Siemens results/exceptions;
-- dispose resources.
+The Add-In converts the selected Siemens object into a serializable snapshot before sending it to the Bridge.
 
-No object from a `Siemens.Engineering.*` namespace may leave this layer.
+The snapshot may include:
 
-### 2.2 Application service layer
+- object type and display metadata;
+- project and parent context;
+- source or exported content when supported;
+- the requested action;
+- correlation metadata.
 
-Responsibilities:
+Rules:
 
-- stable project/domain interfaces;
-- authorization and approval checks;
-- concurrency validation;
-- temporary-file policy;
-- compile/validation orchestration;
-- audit logging;
-- DTO creation.
+- live `IEngineeringObject` instances never cross the Add-In boundary;
+- snapshots must remain bounded and serializable;
+- unsupported source extraction must be represented as an explicit limitation or error;
+- project content is untrusted model input;
+- absolute paths and unnecessary source content must not be logged.
 
-### 2.3 MCP transport layer
+## Bridge task contract
 
-Responsibilities:
+The Add-In creates a `BridgeTaskRequest` and polls the returned task ID.
 
-- validate tool input schemas;
-- map tool calls to application services;
-- return bounded structured responses;
-- never contain Siemens navigation logic.
+The Bridge is responsible for:
 
-## 3. Core service interfaces
+- validating authentication;
+- assigning and preserving correlation IDs;
+- resolving the requested or configured runtime;
+- executing the action profile;
+- applying cancellation and timeouts;
+- returning structured status, result, and error information.
 
-```csharp
-public interface ITiaContextService
-{
-    TiaContextDto GetCurrentContext();
-    IReadOnlyList<ProjectSummaryDto> ListProjects();
-    SelectedObjectDto GetSelection(SelectionToken token);
-}
+The runtime choice does not change the Add-In contract.
 
-public interface IPlcQueryService
-{
-    IReadOnlyList<PlcSummaryDto> ListPlcs(ProjectId projectId);
-    IReadOnlyList<BlockSummaryDto> ListBlocks(PlcId plcId, BlockQuery query);
-    BlockArtifactDto ExportBlock(BlockHandle block, ExportProfile profile);
-    ReferenceResultDto FindReferences(ObjectHandle target, ReferenceQuery query);
-}
+## Current action profiles
 
-public interface IPlcMutationService
-{
-    ChangePreviewDto PreviewBlockImport(BlockImportProposal proposal);
-    MutationResultDto ApplyApprovedBlockImport(ApprovedChange change);
-}
-
-public interface IHmiQueryService
-{
-    IReadOnlyList<HmiTargetSummaryDto> ListTargets(ProjectId projectId);
-    IReadOnlyList<HmiScreenSummaryDto> ListScreens(HmiTargetId targetId);
-    HmiObjectDto ReadObject(HmiObjectHandle handle, PropertySelection selection);
-}
-
-public interface IEngineeringValidationService
-{
-    CompileResultDto Compile(ObjectHandle target);
-    CompareResultDto Compare(CompareRequest request);
-    ValidationResultDto Validate(ObjectHandle target);
-}
-```
-
-## 4. Handles and session scope
-
-Use opaque, session-scoped handles:
-
-```csharp
-public sealed record ObjectHandle(
-    string SessionId,
-    string ProjectId,
-    string ObjectId,
-    string Kind,
-    string DisplayPath,
-    string VersionToken);
-```
-
-`ObjectId` is generated and resolved by the integration layer. It is not claimed to be a globally persistent Siemens identifier.
-
-Before a write, resolve the handle again and verify:
-
-- same TIA session;
-- same project;
-- same object kind;
-- same expected display metadata where relevant;
-- same version/content token.
-
-## 5. DTO rules
-
-DTOs MUST:
-
-- be serializable without custom Siemens types;
-- use bounded collections;
-- include truncation flags;
-- include operation/session IDs;
-- include capability status;
-- include a version/content token for mutable artifacts;
-- avoid absolute local paths unless needed for a user-approved artifact.
-
-DTOs MUST NOT:
-
-- contain raw `IEngineeringObject` references;
-- expose passwords or secure strings;
-- contain entire HMI/project object graphs by default;
-- use exception text as the only error contract.
-
-## 6. MCP tool design
-
-Each tool should represent one engineering intent.
-
-Good:
-
-```text
-tia_get_current_context
-tia_list_plc_blocks
-tia_export_plc_block
-tia_find_references
-tia_compile_target
-tia_preview_block_import
-tia_apply_approved_change
-```
-
-Avoid:
-
-```text
-tia_invoke_any_method
-tia_set_any_attribute
-tia_execute_code
-tia_import_any_file
-tia_download_anything
-```
-
-Generic reflection tools bypass domain validation and approval boundaries.
-
-## 7. Read/write split
-
-Read tools may execute automatically when authorized.
-
-Write flow:
-
-```text
-proposal
-  -> preview tool
-  -> diff + impact analysis
-  -> user approval
-  -> short-lived approval token
-  -> apply tool
-  -> compile/validate
-  -> result + audit
-```
-
-The apply tool MUST reject:
-
-- expired approval;
-- different user/session/project;
-- changed content hash;
-- broader change than the approved diff;
-- missing required compile/validation capability.
-
-## 8. Risk classes
-
-| Class | Examples | Default |
+| Product action | Action ID | Agent profile |
 |---|---|---|
-| R0 | list/read metadata | automatic |
-| R1 | export, compare, cross-reference, validate | automatic and audited |
-| R2 | compile, temporary generation | automatic or confirmation by policy |
-| R3 | project mutation | preview + explicit approval |
-| R4 | delete, broad import, connection/runtime changes | reinforced approval |
-| R5 | download, Safety mutation, protection/security changes | disabled by default |
+| Explain selected object | `explain` | `tia-explain` |
+| Review selected object | `review` | `tia-review` |
+| Propose change | `propose` | `tia-change` |
 
-## 9. Concurrency and stale state
+The proposal profile produces recommendations. The current product does not implement a preview, approval, or apply endpoint for TIA project changes.
 
-For text/exportable artifacts, calculate a SHA-256 hash over a canonicalized export. For metadata-only objects, derive a version token from stable observable fields and session identity.
+## MCP boundary
 
-A mutation MUST re-export or re-read the object immediately before applying the change. If the token differs, return `TIA_CONCURRENCY_CONFLICT` with a fresh snapshot.
+Each supported runtime may invoke `tia-mcp` according to its runtime-specific configuration.
 
-## 10. UI-thread and latency rules
+The external MCP package can evolve independently and may expose operations beyond the supported TIA Portal Code Agent workflow. Tool availability in the external MCP server does not expand this product's documented capabilities.
 
-- Add-In click callbacks should capture context and return quickly.
-- LLM calls MUST run outside the TIA UI thread.
-- Do not hold exclusive access while waiting for the model.
-- Progress updates should be sent only during actual TIA/local operation phases.
-- Cancellation must propagate from TIA progress UI to the operation token.
+Product documentation must distinguish:
 
-## 11. Logging and audit
+- API or MCP capabilities that exist upstream;
+- operations the runtime can technically discover;
+- workflows intentionally exposed and validated by this product.
 
-Every tool call SHOULD log:
+Only the final category is supported product behavior.
 
-- operation ID;
-- tool name and risk class;
-- user/session/project identifiers;
-- target handles;
-- input hash, not sensitive raw payloads;
-- approval ID for writes;
-- duration;
-- Siemens result state/counts;
-- produced artifact hashes;
-- final outcome/error code.
+## Runtime selection
 
-## 12. Definition of done for a new tool
+Selection precedence:
 
-A new tool is complete only when:
+1. runtime override in the task request;
+2. `TIA_AGENT_RUNTIME` environment variable;
+3. `defaultRuntime` in `%LOCALAPPDATA%\TiaAgent\config.json`;
+4. `opencode`.
 
-- its V21 symbols are verified in the XML/API assembly;
-- it uses typed application services;
-- it returns DTOs only;
-- input/output schemas are bounded;
-- authorization and risk class are defined;
-- cancellation and disposal are handled;
-- errors are translated;
-- write operations have preview and approval;
-- integration tests cover success, unavailable capability, cancellation and stale state;
-- the tool is documented in this directory.
+Supported IDs are `opencode`, `mimo`, and `claude`. Runtime failures are returned explicitly; the Bridge does not silently switch to another runtime.
+
+## Error and cancellation rules
+
+- Every task must preserve a correlation ID.
+- Long-running work must execute outside the TIA UI thread.
+- Cancellation must propagate to the selected adapter and child process or HTTP request.
+- Timeouts must produce a structured terminal task state.
+- Runtime output must not be treated as trusted executable instructions.
+- Failures must not leave the Add-In waiting indefinitely.
+
+## Current safety boundary
+
+Supported:
+
+- selected-object context capture;
+- explanations;
+- reviews;
+- change proposals;
+- read-oriented MCP context gathering;
+- diagnostics.
+
+Not supported:
+
+- direct project mutation;
+- generic method or attribute invocation;
+- PLC download or online control;
+- safety modification;
+- hardware or network changes;
+- deletion;
+- unattended project-wide refactoring.
+
+## Future write contract
+
+A future write workflow would require a separately implemented and validated contract with:
+
+- deterministic preview and diff;
+- explicit user approval outside model text;
+- session, project, object, and content-hash binding;
+- short-lived, single-use authorization;
+- stale-state detection;
+- recoverable previous state;
+- compile or consistency validation;
+- audit evidence and partial-failure handling.
+
+These are future requirements and must not be interpreted as current MCP tools or Add-In behavior.
+
+## Validation sources
+
+Verify changes against:
+
+- `src/TiaAgent.AddIn/Providers/ProjectTreeProvider.cs`;
+- Add-In snapshot and Bridge-client implementations;
+- contracts under `src/TiaAgent.Contracts`;
+- Bridge runtime registry and adapters;
+- `config/opencode.example.json`;
+- runtime tests;
+- the exact installed `TiaMcpServer` version used for release validation.

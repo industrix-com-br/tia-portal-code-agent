@@ -1,113 +1,90 @@
 # TIA Portal V21 Teamcenter Gateway and version-control APIs
 
-## 1. Teamcenter Gateway assembly
+## Scope
 
-`Siemens.Engineering.TeamcenterGateway` exposes integration with Teamcenter for TIA projects and global libraries.
+`Siemens.Engineering.TeamcenterGateway` exposes integration with Teamcenter for TIA projects and global libraries. The V21 Add-In API also contains version-control integration points.
 
-Key types include:
+This file is an API reference. TIA Portal Code Agent does not currently implement Teamcenter search, download, locking, check-in, revision management, metadata changes, or VCI workflows.
+
+## Teamcenter Gateway surface
+
+Important types include:
 
 - `TeamcenterConnectionProvider`;
 - `TcGatewayConnectionInfo`;
 - `TcGatewaySearchAndDownloadProvider`;
 - `TcGatewayWorkflowProvider`;
 - `TcGatewayLockProvider`;
-- `ItemDetails`, `RevisionDetails` and `ItemInfo`;
-- search result types;
-- Teamcenter properties and list-of-value information;
-- dataset, item and cache option enums;
+- item, revision, property, dataset, cache, and search-result models;
 - `TcGatewayException` and error callbacks.
 
-Dataset types distinguish TIA project and TIA library datasets.
+Dataset types distinguish TIA project and TIA library data. Any future serialized model must keep Teamcenter item/revision identity separate from local TIA project identity.
 
-## 2. Domain responsibilities
+## Domain capabilities
 
-The Teamcenter surface covers:
+The V21 API surface includes:
 
-- establishing or inspecting a connection;
-- searching items/revisions;
-- downloading project/library content;
-- creating or updating workflow-related item metadata;
+- connection inspection;
+- item and revision search;
+- project or library download;
+- workflow-related item metadata;
 - lock handling;
-- mapped/custom Teamcenter properties;
+- mapped and custom properties;
 - local cache behavior.
 
-Item and revision DTOs SHOULD keep Teamcenter identity separate from local TIA project identity.
+The existence of these APIs does not make them supported agent or product actions.
 
-```csharp
-public sealed record TeamcenterRevisionRef(
-    string ItemId,
-    string RevisionId,
-    string DatasetType,
-    string? DatasetId);
-```
+## Locking and concurrency
 
-## 3. Locking and concurrency
+Teamcenter locks and TIA project exclusive access are separate boundaries. A future workflow changing a Teamcenter-managed project would need to coordinate both systems and preserve the relationship between local project state and Teamcenter revision state.
 
-Teamcenter locks and TIA project exclusive access are separate concerns. A workflow that changes a Teamcenter-managed project may require both:
+A TIA transaction is not a substitute for Teamcenter locking, revision control, or check-in policy.
 
-1. verify Teamcenter lock state;
-2. obtain the required Teamcenter lock;
-3. open/attach to the local TIA project;
-4. obtain TIA exclusive access for mutation;
-5. commit local change;
-6. save/check in through the Teamcenter workflow;
-7. release locks according to policy.
+## Version-control Add-In surface
 
-Do not treat a TIA transaction as a substitute for Teamcenter revision control.
+`Siemens.Engineering.AddIn.VersionControl` includes provider and workflow families for VCI workspace, editor, repository, and import integration. These are distinct from the current `ProjectTreeAddInProvider` context menu.
 
-## 4. Version-control Add-In surface
+TIA Portal Code Agent does not register VCI or Teamcenter Add-In providers.
 
-`Siemens.Engineering.AddIn.Base` also contains `Siemens.Engineering.AddIn.VersionControl` APIs and provider families for VCI workspace and import workflows.
+## Current product boundary
 
-Examples include:
+The current product does not expose even read-only Teamcenter commands. Teamcenter context may be discussed only when it is already present in a supported selected-object snapshot or external runtime context.
 
-- workspace-view Add-In providers;
-- editor Add-In providers;
-- repository composite Add-Ins;
-- import Add-Ins;
-- workflow support around repository/import operations.
+Unsupported product behavior includes:
 
-These extension points allow UI and workflow integration with version-control operations. They are distinct from the general `ProjectTreeAddInProvider` context menu.
+- Teamcenter searches or downloads;
+- lock acquisition or release;
+- revision creation;
+- property updates;
+- check-in or workflow execution;
+- VCI import, export, or repository actions.
 
-## 5. Agent policy
+## Future requirements
 
-Read-only Teamcenter tools may:
+Any future Teamcenter integration would require:
 
-- inspect connection status;
-- search items and revisions;
-- inspect properties and lock state;
-- resolve the Teamcenter source of the current project.
+- explicit connection and identity validation;
+- bounded search and property results;
+- dedicated authorization;
+- lock-state and stale-revision validation;
+- deterministic preview for metadata or content changes;
+- explicit approval;
+- coordinated TIA and Teamcenter recovery behavior;
+- complete audit evidence;
+- controlled handling of cache and downloaded files.
 
-Mutating tools such as check-in, revision creation, metadata changes or lock changes MUST require explicit approval and a dedicated Teamcenter permission.
+These are future design constraints, not implemented tools.
 
-## 6. Recommended tools
+## Error handling
 
-```text
-tia_teamcenter_get_connection
-tia_teamcenter_search
-tia_teamcenter_get_item
-tia_teamcenter_get_revision
-tia_teamcenter_get_lock_state
-tia_teamcenter_download_preview
-```
+A future integration should preserve Teamcenter callback messages, exception type, item and revision identifiers, cache options, operation IDs, and the TIA project state reached before failure.
 
-Restricted:
+## Validation sources
 
-```text
-tia_teamcenter_acquire_lock
-tia_teamcenter_release_lock
-tia_teamcenter_create_revision
-tia_teamcenter_update_properties
-tia_teamcenter_check_in
-```
+Before documenting Teamcenter or VCI support:
 
-## 7. Error handling
-
-Preserve:
-
-- Teamcenter error callback message;
-- `TcGatewayException` type/message;
-- item/revision identifiers;
-- local cache option;
-- workflow operation ID;
-- TIA project state if the failure occurred after opening the project.
+- verify the exact V21 assembly and licensed product availability;
+- test the workflow against a controlled Teamcenter environment;
+- validate lock and recovery semantics;
+- review credentials and local cache handling;
+- implement the Add-In and Bridge workflow end-to-end.

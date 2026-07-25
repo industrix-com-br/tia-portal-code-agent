@@ -1,185 +1,75 @@
 # TIA Portal V21 core object model
 
-## 1. Scope
+## Scope
 
-This specification describes the common object model implemented primarily by `Siemens.Engineering.Base`.
+This file summarizes the common V21 engineering object model exposed primarily by `Siemens.Engineering.Base`.
 
-The core API provides:
+It is an API reference, not a statement that TIA Portal Code Agent supports project creation, save, archive, mutation, compile, compare, or download. The current product uses selected-object snapshots and read-oriented external MCP context only.
 
-- TIA Portal process startup and attachment;
-- project creation, opening, retrieval, save, archive and close;
-- navigation through devices, groups, subnets and libraries;
-- generic engineering-object discovery;
-- service discovery;
-- exclusive access and transactions;
-- common compile, compare, download and cross-reference infrastructure.
+## Session entry points
 
-## 2. Session entry points
-
-### 2.1 Start a TIA Portal instance
-
-`Siemens.Engineering.TiaPortal` represents a TIA Portal session. Its constructor accepts `TiaPortalMode`.
-
-Conceptual example:
-
-```csharp
-using Siemens.Engineering;
-
-using var tia = new TiaPortal(TiaPortalMode.WithUserInterface);
-```
-
-Use the mode required by the product scenario. Keep the `TiaPortal` instance alive for the full operation scope and dispose it deterministically.
-
-### 2.2 Discover and attach to a running instance
-
-The static process APIs are:
+`Siemens.Engineering.TiaPortal` represents a TIA Portal session. V21 supports starting a process with `TiaPortalMode` and discovering or attaching to existing processes through APIs such as:
 
 - `TiaPortal.GetProcesses()`;
 - `TiaPortal.GetProcess(...)`;
 - `TiaPortalProcess.Attach()`.
 
-`TiaPortalProcess` exposes process identity and context, including:
+`TiaPortalProcess` exposes process identity, path, mode, project path, installed software, attached sessions, and attach events. Process selection should use explicit user/session context and project identity rather than process ID alone.
 
-- `Id`;
-- `Path`;
-- `Mode`;
-- `ProjectPath`;
-- `InstalledSoftware`;
-- `AttachedSessions`;
-- `Attaching` event.
+`TiaPortalSession` exposes access level, trust authority, process identity, version, attach time, and utilization state. Trust and access level are part of the integration contract.
 
-A process selection algorithm SHOULD use more than process ID. Prefer a match based on process ID plus project path or an explicit session selected by the user.
+The current Add-In is loaded inside TIA Portal and does not start or attach to a separate TIA process as part of its selected-object workflow.
 
-### 2.3 Trust and access
+## Project lifecycle API
 
-`TiaPortalSession` exposes:
+`TiaPortal.Projects` is a `ProjectComposition`. The V21 API includes project create, open, retrieve, upgrade, save, archive, and close operations.
 
-- `AccessLevel`;
-- `TrustAuthority`;
-- `ProcessPath` and `ProcessId`;
-- session version and attach time;
-- active/utilization state.
+`ProjectBase` exposes roots such as:
 
-`TiaPortalProcess.Attaching` allows TIA Portal to approve an attaching process. The project MUST treat certificate trust and access level as part of the session contract, not as an implementation detail.
+- devices and device groups;
+- subnets;
+- project library;
+- language settings;
+- history and product metadata.
 
-## 3. Project lifecycle
+These lifecycle operations are not current TIA Portal Code Agent features. Project upgrade, save, archive, and close must never be inferred from a model response or change proposal.
 
-`TiaPortal.Projects` is a `ProjectComposition`.
+## Engineering Object Model
 
-Important operations include:
-
-- `Open(FileInfo)`;
-- `Open(..., UmacDelegate)`;
-- `Open(..., ProjectOpenMode)`;
-- `OpenWithUpgrade(...)`;
-- `Retrieve(...)` and `RetrieveWithUpgrade(...)`;
-- `Create(DirectoryInfo, string)`.
-
-`Project` provides:
-
-- `Save()`;
-- `SaveAs(DirectoryInfo)`;
-- `Archive(DirectoryInfo, string, ProjectArchivationMode)`;
-- `Close()`.
-
-`ProjectBase` exposes the engineering roots:
-
-- `Devices`;
-- `DeviceGroups`;
-- `UngroupedDevicesGroup`;
-- `Subnets`;
-- `ProjectLibrary`;
-- `LanguageSettings`;
-- `HistoryEntries`;
-- `UsedProducts`;
-- project metadata such as `Name`, `Path`, `Version`, `IsModified` and timestamps.
-
-### Required lifecycle behavior
-
-- A service MUST verify that the expected project is still open before every mutating operation.
-- A project close or TIA disposal MUST invalidate all cached handles.
-- `OpenWithUpgrade` and `RetrieveWithUpgrade` MUST never be invoked implicitly by an agent. Upgrading a project requires explicit user intent.
-- `Save()` MUST be a separate approved operation; do not silently save after every mutation.
-
-## 4. Engineering Object Model (EOM)
-
-Most domain objects participate in the Engineering Object Model.
-
-### 4.1 `IEngineeringObject`
+Most domain objects participate in the Engineering Object Model through `IEngineeringObject`.
 
 The generic interface supports:
 
-- `GetComposition(string)`;
-- `GetCompositionInfos()`;
-- `GetAttribute(string)` and `GetAttributes(...)`;
-- `GetAttributeInfos()`;
-- `SetAttribute(...)` and `SetAttributes(...)`;
-- `GetInvocationInfos()`;
-- `Invoke(...)`;
-- `GetCreationInfos(...)`;
-- `Create(...)`.
+- composition discovery;
+- attribute discovery and access;
+- invocation metadata and invocation;
+- creation metadata and creation.
 
-This dynamic layer is useful for inspection and generic tooling, but typed APIs SHOULD be preferred when available.
+Typed APIs should be preferred when available. Generic string-based invocation, creation, or attribute setting must not be exposed as an unrestricted agent capability.
 
-Use dynamic EOM access for:
+## Compositions and parent relationships
 
-- capability discovery;
-- diagnostics;
-- generic metadata explorers;
-- forward-compatible inspection where a typed wrapper is intentionally unavailable.
+A composition is the owned collection through which children are enumerated, found, created, or imported. It is not merely a list.
 
-Do not use string-based `Invoke` or `Create` as the default implementation strategy. They reduce compile-time safety and make version drift harder to detect.
+Parent traversal is useful for diagnostics and context, but normal navigation should begin at stable project roots. Reverse traversal can be ambiguous in associated or derived views.
 
-### 4.2 Compositions
+## Engineering services
 
-A composition represents an owned collection in the engineering tree. Typical composition behavior includes:
+Objects implementing `IEngineeringServiceProvider` can expose optional services through `GetService<T>()` and service metadata.
 
-- enumeration;
-- `Count`, indexed access and `Any()`;
-- `Find(...)` where supported;
-- type-specific `Create`, `Import` or `CreateFrom` methods.
-
-A composition is not merely a list. It is the API boundary through which child objects are normally created, imported or located.
-
-### 4.3 Parent relationships
-
-Most objects expose `Parent`. Parent traversal is useful for diagnostics, but code SHOULD navigate from stable roots to children for normal operations. Reverse traversal can become ambiguous when associations or derived views are involved.
-
-## 5. Engineering services
-
-Objects that implement `IEngineeringServiceProvider` expose:
-
-```csharp
-T? GetService<T>();
-IEnumerable<EngineeringServiceInfo> GetServiceInfos();
-```
-
-Services add optional capabilities without forcing every object to implement every operation.
-
-Common examples include:
+Examples include:
 
 - `SoftwareContainer` on a hardware `DeviceItem`;
-- compile services;
+- compile providers;
 - download providers;
-- cross-reference services;
-- protection providers;
-- fingerprint/checksum providers.
+- cross-reference providers;
+- protection and fingerprint services.
 
-Recommended capability test:
+A missing service is a normal capability result. Availability can depend on product installation, license, device family, project state, access level, and trust.
 
-```csharp
-var service = objectWithServices.GetService<SomeService>();
-if (service is null)
-{
-    return CapabilityUnavailable(...);
-}
-```
+## Hardware-to-software navigation
 
-The integration MUST handle `null` as a normal capability result. Product edition, device type, configuration and project state can affect service availability.
-
-## 6. Hardware-to-software navigation
-
-The standard navigation path is:
+The standard path is:
 
 ```text
 ProjectBase.Devices
@@ -189,78 +79,40 @@ ProjectBase.Devices
         -> SoftwareContainer.Software
 ```
 
-`SoftwareContainer.Software` can then be interpreted as the relevant product model, for example:
+The resulting software may be a PLC, WinCC classic, WinCC Unified, or another supported product model. Do not assume every `DeviceItem` contains software.
 
-- `Siemens.Engineering.SW.PlcSoftware`;
-- `Siemens.Engineering.Hmi.HmiTarget`;
-- `Siemens.Engineering.HmiUnified.HmiSoftware`.
+## Exclusive access and transactions
 
-Do not assume that every `DeviceItem` contains software. Hardware trees include racks, interfaces, modules and other items.
+V21 exposes exclusive-access and transaction APIs for operations that modify project state.
 
-## 7. Exclusive access and transactions
+General safety constraints for any future mutation include:
 
-`TiaPortal.ExclusiveAccess(...)` acquires an exclusive-access scope. `ExclusiveAccess` exposes:
+- keep exclusive access short;
+- do not call a remote model while holding exclusive access;
+- re-read and validate the target immediately before mutation;
+- detect stale state;
+- commit only after deterministic local validation;
+- surface cancellation and partial failure.
 
-- cancellation state;
-- display text;
-- `Transaction(ITransactionSupport, string)`.
+These are future design requirements. The current product does not acquire exclusive access or execute project mutations.
 
-`Transaction` represents a unit of work and exposes:
+## Resource and error handling
 
-- `CanCommit`;
-- `CommitRequested`;
-- `CommitOnDispose()`.
-
-Recommended mutation flow:
-
-```text
-validate session
-  -> acquire exclusive access
-    -> begin transaction on a supported root
-      -> re-read target state
-      -> verify concurrency token/hash
-      -> apply bounded mutation
-      -> validate result
-      -> request commit on dispose
-```
-
-Rules:
-
-- MUST keep the exclusive scope as short as practical.
-- MUST surface user cancellation.
-- MUST NOT perform remote model calls while holding exclusive access.
-- MUST prepare and validate the proposed change before entering the transaction.
-- MUST abort rather than commit if the current object no longer matches the expected version/hash.
-
-## 8. Resource and error handling
-
-- Dispose all disposable Siemens objects in `finally`/`using` scopes.
-- Translate Siemens exceptions at the integration boundary into project error codes while preserving the original type and message in diagnostics.
-- Keep user-facing errors concise; retain detailed technical context in logs.
-- Treat `EngineeringNotSupportedException` as a capability/version mismatch, not as an unknown crash.
+- Dispose session-scoped Siemens resources deterministically.
+- Keep live Siemens objects inside the TIA integration operation.
+- Convert returned data to bounded serializable contracts.
+- Treat `EngineeringNotSupportedException` as a capability or version mismatch.
 - Avoid long-running synchronous work on the TIA Portal UI thread.
+- Preserve technical exception details in protected diagnostics while keeping user errors concise.
 
-## 9. Recommended project adapters
+## Current project boundary
 
-```csharp
-public interface ITiaSessionGateway
-{
-    TiaSessionSnapshot GetSnapshot();
-    ProjectHandle RequireProject(ProjectSelector selector);
-}
+The current Add-In:
 
-public interface IEngineeringObjectReader
-{
-    EngineeringObjectSnapshot Read(ObjectHandle handle);
-    IReadOnlyList<CompositionSnapshot> ListCompositions(ObjectHandle handle);
-    IReadOnlyList<AttributeSnapshot> ListAttributes(ObjectHandle handle);
-    IReadOnlyList<ServiceSnapshot> ListServices(ObjectHandle handle);
-}
+- receives its TIA context from `ProjectTreeAddInProvider` callbacks;
+- captures a serializable selection snapshot;
+- releases live Siemens objects before Bridge and runtime work;
+- does not implement a shared project gateway, transaction runner, or in-repository MCP handler;
+- does not create, open, save, archive, close, compile, compare, download, or mutate projects.
 
-public interface IEngineeringTransactionRunner
-{
-    TResult Execute<TResult>(MutationPlan<TResult> plan);
-}
-```
-
-These interfaces MUST return project-owned DTOs and handles, never raw Siemens objects.
+Before documenting a new object-model capability as supported, verify it against the installed V21 assemblies, implement the complete Add-In and Bridge workflow, and validate it in a controlled V21 environment.

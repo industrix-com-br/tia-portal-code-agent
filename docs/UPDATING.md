@@ -1,124 +1,85 @@
 # Update Guide
 
-How to update an existing TIA Portal Code Agent installation.
+The CLI package and its installed payload are updated separately.
 
 > [!CAUTION]
-> This project is experimental and not ready for production use. Do not use it on live systems, safety programs, or workflows where an incorrect response or modification could affect people, equipment, availability, or compliance.
+> This project is experimental and is not ready for production use.
 
-## Check current version
-
-Display the currently active version and CLI product version:
+## Inspect the current installation
 
 ```powershell
 tia-agent version
-```
-
-For detailed version information including installed versions, configuration path, and environment:
-
-```powershell
 tia-agent version --verbose
+tia-agent channel
 ```
 
-List all installed versions with active and rollback candidates:
+`version --verbose` shows the CLI product version, active payload version, configuration path, and installed payload versions. There is no separate `tia-agent versions` command.
+
+## Update the CLI package
+
+Latest stable release:
 
 ```powershell
-tia-agent versions
+dotnet tool update --global TiaAgent.Cli
 ```
 
-## Update to latest payload
+Latest prerelease:
 
-If you have a newer CLI package installed (via `dotnet tool update`) and want to activate its bundled payload:
+```powershell
+dotnet tool update --global TiaAgent.Cli --prerelease
+```
+
+Specific version:
+
+```powershell
+dotnet tool update --global TiaAgent.Cli --version 0.3.0-beta.1
+```
+
+## Install and activate the new payload
+
+After updating the global tool, install the payload bundled inside that CLI package:
 
 ```powershell
 tia-agent update
 ```
 
-## Update to a specific version
+The command validates the bundled payload, installs it side-by-side under `%LOCALAPPDATA%\TiaAgent\versions\`, activates it, and redeploys the Add-In.
 
-Update to an explicit version from a local payload directory:
+For a development or diagnostic payload directory:
 
 ```powershell
-tia-agent update --version 0.2.0-beta.1 --payload-dir /path/to/payload
+tia-agent update --version 0.3.0-beta.1 --payload-dir C:\path\to\payload
 ```
 
-## Update the CLI tool itself
-
-To get a newer CLI tool version from NuGet:
+## Update channel
 
 ```powershell
-# Update to latest stable
-dotnet tool update --global Industrix.TiaAgent.Cli
-
-# Update to latest prerelease
-dotnet tool update --global Industrix.TiaAgent.Cli --prerelease
-
-# Update to a specific version
-dotnet tool update --global Industrix.TiaAgent.Cli --version 0.2.0
-```
-
-After updating the CLI tool, run `tia-agent update` to activate the new payload.
-
-## Channel-aware updates
-
-The update command respects the configured update channel. Versions that do not belong to the current channel are rejected unless `--force` is used.
-
-Check the current channel:
-
-```powershell
-tia-agent channel
-```
-
-Change the channel:
-
-```powershell
+tia-agent channel show
 tia-agent channel set stable
+tia-agent channel set rc
 tia-agent channel set beta
+tia-agent channel set alpha
 ```
 
-Channel precedence (most to least stable): `stable > rc > beta > alpha`. Downgrading the channel requires `--force`:
+The channel is validated by the CLI during update and activation. Use `--force` only when intentionally crossing a channel restriction.
 
-```powershell
-tia-agent channel set rc --force
-```
+## Verify the update
 
-## Post-update verification
-
-After any update:
+Restart TIA Portal so it reloads the deployed `.addin`, then run:
 
 ```powershell
 tia-agent doctor
 tia-agent status
-```
-
-Verify the Add-In is deployed:
-
-```powershell
 tia-agent version --verbose
 ```
 
-### TIA Portal restart
-
-After updating, restart TIA Portal so it picks up the new Add-In artifact. The Add-In file is redeployed automatically to `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\`.
-
-### Restart services
-
-If services were running, stop and restart them:
+If runtime services were already running:
 
 ```powershell
 tia-agent stop
 tia-agent start
 ```
 
-## Skipping versions
+## Recovery
 
-Updating across multiple versions is supported only when the target release explicitly states that the source version is accepted. Check the target release notes before skipping versions.
-
-## Troubleshooting updates
-
-If an update fails:
-
-1. Run `tia-agent doctor` to check environment health.
-2. Check the active version: `tia-agent versions`.
-3. If the update left the installation in a bad state, use [rollback](ROLLBACK.md) to restore the previous version.
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common error resolution.
+When the new payload is already installed but should not remain active, use [ROLLBACK.md](ROLLBACK.md). When package extraction or validation fails, use [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

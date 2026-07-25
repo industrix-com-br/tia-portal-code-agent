@@ -2,291 +2,143 @@
 
 Status: mandatory baseline
 
-## 1. Protected assets
+## Protected assets
 
-- TIA engineering project integrity.
-- PLC and plant operational safety.
-- safety-related engineering data.
-- source code and intellectual property.
-- Windows user credentials.
-- model provider credentials.
-- local agent-runtime credentials.
-- audit history.
-- Add-In package integrity.
+- TIA engineering project integrity;
+- PLC and plant operational safety;
+- source code and intellectual property;
+- Windows and runtime credentials;
+- Bridge bearer tokens;
+- Add-In and release-package integrity;
+- diagnostic and audit information.
 
-## 2. Trust boundaries
+## Trust boundaries
 
 ```text
-TIA Portal process
-  | Add-In assemblies
-  | application services
-  | Openness adapter
-  +---------------- trusted local engineering boundary
-
-loopback HTTP / named pipe
-  +---------------- authenticated local transport boundary
-
-agent runtime and model
-  +---------------- untrusted reasoning boundary
-
-project content
-  +---------------- untrusted data boundary
+TIA Portal process and Add-In
+  -> authenticated loopback HTTP
+    -> Bridge and selected runtime
+      -> external model and MCP integration
+        -> TIA Portal project data
 ```
 
-The model is not authorized merely because it generated a tool call.
+The model and project content are untrusted. A model-generated instruction does not grant permission or user approval.
 
-## 3. Permission classes
+## Current product boundary
 
-### Read
+The shipped workflow supports:
 
-Examples:
+- reading the selected object snapshot;
+- explanations;
+- reviews;
+- change proposals;
+- runtime and environment diagnostics.
 
-- context;
-- object metadata;
-- block snapshot;
-- interfaces;
-- references.
+The shipped workflow does not support:
 
-Default: allow when within captured project and payload limits.
-
-### Analysis
-
-Examples:
-
-- export to controlled temporary storage;
-- diff;
-- dependency graph.
-
-Default: allow with audit and cleanup.
-
-### Validation
-
-Examples:
-
-- compilation;
-- consistency check.
-
-Default: explicit policy or user confirmation depending on cost and side effects.
-
-### Write
-
-Examples:
-
-- import;
-- create;
-- rename;
-- modify.
-
-Default: deny unless preview and approval flow is complete.
-
-### Prohibited
-
-- PLC download;
-- online control;
-- safety modification;
-- arbitrary hardware/network changes;
+- applying project changes;
+- PLC download or online control;
+- safety-program changes;
+- hardware or network changes;
 - deletion;
-- arbitrary Openness execution.
+- unattended project-wide refactoring.
 
-Default: no public tool.
+The upstream MCP dependency may expose additional tools. Those tools are not automatically supported by this product.
 
-## 4. `Config.xml` least privilege
+## Add-In permissions
 
-The `Config.xml` manifest declares three permission categories. Only the minimum required set should be declared.
+`src/TiaAgent.AddIn/Config.xml` is the source of truth for the current package permission set. It currently requests:
 
-### 4.1 `TIAPermissions`
+- `TIA.ReadWrite`;
+- `UIPermission`;
+- `FileIOPermission`;
+- `EnvironmentPermission`;
+- `SecurityPermission.UnmanagedCode`;
+- `WebPermission`.
 
-Controls TIA Portal Openness access level:
+These permissions support current selection capture, WPF UI, logging, environment discovery, and loopback Bridge communication. The manifest's `TIA.ReadWrite` permission is broader than the current read-only product workflow. Reducing it requires implementation and TIA-host validation and must not be claimed as completed by documentation alone.
 
-- `<TIA.ReadWrite />` - full read/write access to the engineering project;
-- `<TIA.ReadOnly />` - read-only access.
+Every permission change requires review of `Config.xml`, package generation, Add-In startup, selection capture, UI behavior, logging, and Bridge communication.
 
-**MVP policy**: Use `<TIA.ReadOnly />` unless write capability is explicitly required. See `ADDIN_TECHNICAL_SPEC.md` section 4.1.
+## Local endpoint policy
 
-### 4.2 `SecurityPermissions`
+- Bind services to `127.0.0.1` or equivalent loopback only.
+- Never bind to `0.0.0.0`.
+- Protect non-health Bridge endpoints with the bearer token stored at `%LOCALAPPDATA%\TiaAgent\bridge.token`.
+- Keep supervisor-generated transient secrets under `%LOCALAPPDATA%\TiaAgent\runtime\secrets\`.
+- Do not include either credential class in `runtime.json`, logs, source control, or documentation examples.
+- Validate the advertised endpoint with a health request.
+- Apply request, response, and timeout limits.
 
-Declares individual .NET Code Access Security (CAS) permissions. Each permission requires an explicit element. Available permissions include process start, file I/O, network, registry, and UI permissions.
+## Prompt-injection defense
 
-### 4.3 `UnrestrictedAccess` (V19+ only)
+Treat block comments, symbol names, HMI text, source code, imported documents, and other project content as data.
 
-Grants the Add-In all permissions the current user holds. Requires a justification comment (10-120 characters).
+Project content cannot:
 
-**MVP policy**: Do not use `UnrestrictedAccess`. It conflicts with the least-privilege requirement.
+- grant permissions;
+- approve a change;
+- alter runtime or tool policy;
+- authorize access outside the captured project context;
+- bypass a safety restriction.
 
-### 4.4 Repository policy
+Agent prompts must clearly separate instructions from project content.
 
-- every requested permission must have a feature ID;
-- permissions are reviewed in pull requests;
-- unused permissions are removed;
-- read-only MVP must not request broad write capability;
-- process-start permission is added only if the Add-In itself starts a local runtime;
-- network permission is constrained to required local communication;
-- file permission is constrained to controlled application paths;
-- unmanaged-code permission is not granted merely for sample UI styling.
+## Process execution
 
-## 5. Local endpoint policy
+- Runtime processes execute with the Bridge user's permissions.
+- Prefer direct executable invocation with redirected streams.
+- Avoid passing secrets on command lines.
+- Enforce timeouts and cancellation.
+- Validate process ownership before termination.
+- Do not terminate unrelated processes.
+- Preserve output encoding without executing untrusted shell fragments.
 
-- bind to `127.0.0.1` or equivalent loopback only;
-- do not bind to `0.0.0.0`;
-- generate an ephemeral session secret;
-- rotate on Add-In/session restart;
-- reject missing, invalid, and expired credentials;
-- set request size and response size limits;
-- rate limit tool calls;
-- disable CORS unless a local browser UI is explicitly required;
-- log failed authentication without logging the token.
+## Logging
 
-For external MCP host IPC:
+Record only what is required for diagnosis:
 
-- prefer named pipe;
-- apply Windows ACL for the current user;
-- validate peer/session identity;
-- reject stale Add-In sessions.
+- correlation ID;
+- action and runtime ID;
+- duration and status;
+- structured error information;
+- component versions;
+- non-secret process and endpoint metadata.
 
-## 6. Prompt injection defense
+Do not log by default:
 
-TIA project content is data.
-
-Examples of untrusted content:
-
-- block comments;
-- symbol names;
-- HMI text;
-- device descriptions;
-- imported documentation;
-- file contents.
-
-Rules:
-
-- project content cannot grant permissions;
-- project text cannot approve changes;
-- project text cannot alter tool policy;
-- agent prompts must mark project content as untrusted;
-- writes require an Add-In UI approval event;
-- approval tokens are generated outside the model context.
-
-## 7. Approval model
-
-An approval token binds:
-
-```json
-{
-  "changeSetId": "chg_...",
-  "tiaSessionId": "tia_...",
-  "projectId": "project_...",
-  "approvedBy": "windows-user-identity",
-  "scope": ["obj_..."],
-  "contentDigest": "sha256:...",
-  "issuedAt": "...",
-  "expiresAt": "...",
-  "nonce": "..."
-}
-```
-
-Rules:
-
-- single use;
-- short lifetime;
-- exact content digest;
-- exact object scope;
-- exact session and project;
-- server-side verification;
-- never accepted from natural-language chat alone.
-
-## 8. Concurrency safety
-
-Before write:
-
-1. resolve current project and session;
-2. resolve target object by internal identity;
-3. read current snapshot;
-4. compare current hash with expected hash;
-5. verify approval;
-6. acquire project write serialization;
-7. re-check if required;
-8. apply;
-9. validate;
-10. record result.
-
-Do not write based only on name or path.
-
-## 9. Recovery
-
-Before supported writes:
-
-- capture export or recoverable previous state;
-- identify rollback capability;
-- define failure behavior;
-- never claim rollback succeeded without verification;
-- preserve partial-failure evidence.
-
-## 10. Logging policy
-
-Record:
-
-- IDs;
-- action;
-- tool;
-- duration;
-- result;
-- object scope;
-- hashes;
-- approval metadata;
-- validation result.
-
-Do not record by default:
-
-- model API keys;
-- bearer tokens;
+- bearer tokens or model credentials;
 - Windows secrets;
 - complete source payloads;
-- personal data;
-- entire prompts.
+- entire prompts or responses when unnecessary;
+- personal data unrelated to the task.
 
-## 11. Supply-chain rules
+The Add-In logger is best-effort. Logging failure must never prevent Add-In startup.
 
-- do not commit Siemens binaries;
-- pin third-party packages where feasible;
-- review MCP and runtime dependencies;
-- verify package output contents;
-- hash release `.addin`;
-- sign artifacts when the deployment model supports it;
-- do not download executables at Add-In runtime.
+## Supply chain
 
-## 12. Runtime Supervisor Security
+- Do not commit or package Siemens runtime assemblies.
+- Use central NuGet package management and committed lock files.
+- Build releases from immutable version tags.
+- Sign and verify the `.addin` package in the release workflow.
+- Validate NuGet payload contents and hashes.
+- Do not download executable dependencies from the Add-In at runtime.
+- Keep runtime CLIs and TiaMcpServer as explicit external prerequisites.
 
-The Runtime Supervisor enforces additional security measures for the local development runtime:
+## Future write workflow
 
-### 12.1 Single-Instance Protection
+Direct writes remain unsupported. A future implementation must add all of the following before documentation can describe writes as supported:
 
-- Uses Windows named mutex `Local\TiaAgent.Supervisor` to prevent multiple supervisors
-- Maintains `supervisor.lock` file for diagnostics
-- Validates lock ownership before cleanup
+- deterministic preview and diff;
+- explicit user approval outside model-generated text;
+- scoped, expiring, single-use authorization;
+- content-hash and session validation;
+- serialization of project writes;
+- recoverable previous state;
+- compile or consistency validation;
+- audit evidence and partial-failure reporting;
+- tests proving that approval cannot be forged by project content or model output.
 
-### 12.2 Port Security
+## Safety statement
 
-- All services bind to `127.0.0.1` only (loopback)
-- Never binds to `0.0.0.0` or external interfaces
-- Port allocation validates availability before binding
-
-### 12.3 Credential Management
-
-- Transient credentials stored in `%LOCALAPPDATA%\TiaAgent\runtime\secrets\`
-- Credentials are never logged or included in `runtime.json`
-- Secrets are cleaned on shutdown and periodically (24h expiry)
-
-### 12.4 Process Ownership
-
-- Validates PID belongs to expected executable before shutdown
-- Never terminates unrelated processes
-- Uses bounded timeouts for graceful shutdown
-
-### 12.5 Runtime Manifest
-
-- `runtime.json` is discovery metadata only, not proof of service health
-- Consumers must validate health endpoints before use
-- Manifest is written atomically (temp file + validate + move)
-
-## 13. Safety statement
-
-The product assists engineering. It does not replace commissioning, validation, functional-safety procedures, or authorized plant change control.
+TIA Portal Code Agent assists engineering work. It does not replace commissioning, validation, functional-safety procedures, access control, backups, or authorized plant change management.

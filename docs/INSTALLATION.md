@@ -1,142 +1,138 @@
 # Installation Guide
 
-Step-by-step guide for installing TIA Portal Code Agent using the CLI global tool.
+Install TIA Portal Code Agent through the `TiaAgent.Cli` .NET global tool.
 
 > [!CAUTION]
-> This project is experimental and not ready for production use. Do not use it on live systems, safety programs, or workflows where an incorrect response or modification could affect people, equipment, availability, or compliance.
+> This project is experimental and is not ready for production use. Do not use it on live systems, safety programs, or workflows where an incorrect response could affect people, equipment, availability, or compliance.
 
 ## Prerequisites
 
-| Component | Version | Check |
+| Component | Requirement | Check |
 |---|---|---|
-| Windows | 10/11 x64 | System information |
-| Siemens TIA Portal | V21 with Openness | `C:\Program Files\Siemens\Automation\Portal V21` |
-| .NET SDK | 8.0+ | `dotnet --version` |
-| .NET Framework | 4.8 | Registry: `HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full` (Release >= 528040) |
-| TiaMcpServer | 2.3.1+ | `dotnet tool list -g` |
+| Windows | Windows 10 or 11 x64 | System information |
+| Siemens TIA Portal | V21 with Openness installed | `C:\Program Files\Siemens\Automation\Portal V21` |
+| .NET SDK | .NET 8 SDK compatible with `global.json` | `dotnet --version` |
+| .NET Framework | 4.8 runtime for the Add-In | Windows Features or registry |
+| TiaMcpServer | Installed as a global tool | `dotnet tool list -g` |
 | Openness group | Member of `Siemens TIA Openness` | `whoami /groups` |
 
-At least one agent runtime must also be installed:
+At least one supported agent runtime must also be installed and available on `PATH`:
 
-| Runtime | Install | Check |
+| Runtime | ID | Typical check |
 |---|---|---|
-| Mimo CLI | `npm install -g @mimo-ai/cli` | `mimo --version` |
-| OpenCode | `npm install -g opencode` | `opencode --version` |
-| Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | `claude --version` |
+| Mimo CLI | `mimo` | `mimo --version` |
+| OpenCode | `opencode` | `opencode --version` |
+| Claude Code CLI | `claude` | `claude --version` |
 
-Install the MCP server if not already present:
+Install the MCP server when it is not already present:
 
 ```powershell
-dotnet tool install -g TiaMcpServer
+dotnet tool install --global TiaMcpServer
 tia-mcp doctor
 ```
 
-## Stable installation
+## Install the CLI
 
-Install the latest stable release:
-
-```powershell
-dotnet tool install --global Industrix.TiaAgent.Cli
-```
-
-## Prerelease installation
-
-Install the latest prerelease (beta, RC, or alpha):
+Latest stable release:
 
 ```powershell
-dotnet tool install --global Industrix.TiaAgent.Cli --prerelease
+dotnet tool install --global TiaAgent.Cli
 ```
 
-## Specific version installation
-
-Install a specific version:
+Latest prerelease:
 
 ```powershell
-dotnet tool install --global Industrix.TiaAgent.Cli --version 0.2.0-beta.1
+dotnet tool install --global TiaAgent.Cli --prerelease
 ```
 
-## Verify installation
+Specific version:
 
-After installation, verify the CLI is available:
+```powershell
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.1
+```
+
+Verify the command:
 
 ```powershell
 tia-agent --help
 tia-agent version
 ```
 
-## Post-installation steps
-
-### 1. Install payload
-
-The `tia-agent install` command extracts and activates the bundled payload:
+## Install the bundled payload
 
 ```powershell
 tia-agent install
 ```
 
-This:
-- Extracts Bridge binaries, Add-In, and configuration to `%LOCALAPPDATA%\TiaAgent\versions\<version>\`
-- Deploys the `.addin` file to `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\`
-- Creates default configuration at `%LOCALAPPDATA%\TiaAgent\config.json`
+The command validates the payload embedded in the CLI package, copies it to:
 
-### 2. Restart TIA Portal
+```text
+%LOCALAPPDATA%\TiaAgent\versions\<version>\
+```
 
-Close and reopen TIA Portal V21 so it discovers the newly deployed Add-In.
+It also:
 
-### 3. Activate the Add-In
+- records the installed and active versions;
+- creates `%LOCALAPPDATA%\TiaAgent\config.json` when missing;
+- deploys the versioned `.addin` file to `%APPDATA%\Siemens\Automation\Portal V21\UserAddIns\` when the TIA installation and directory can be resolved;
+- prints the unpacked Add-In path when automatic deployment is not possible.
 
-1. Open a project in TIA Portal V21.
-2. Go to **Options > Settings > Add-Ins**.
+For a development payload:
+
+```powershell
+tia-agent install --payload-dir C:\path\to\payload
+```
+
+## Activate the Add-In
+
+1. Close and reopen TIA Portal V21 after installation.
+2. Open **Options > Settings > Add-Ins**.
 3. Enable **TIA Portal Code Agent**.
-4. Confirm any permission prompts.
+4. Open a project and right-click a supported object.
+5. Choose an action under **AI Code Agent**.
 
-### 4. Start services
+## Start and verify services
 
 ```powershell
 tia-agent start
-```
-
-### 5. Verify setup
-
-```powershell
 tia-agent doctor
+tia-agent status
 ```
 
-All checks should report `[OK]`. Warnings indicate missing optional components; failures indicate blocking issues.
+Use [CLI.md](CLI.md) for the complete command reference and [TROUBLESHOOTING.md](TROUBLESHOOTING.md) when a diagnostic fails.
 
-## Channel-aware installation
+## Update channel
 
-The CLI supports four update channels. When using `--prerelease`, the latest available version from any prerelease channel is installed. To select a specific channel after installation:
+The stored update channel can be viewed or changed with:
 
 ```powershell
-tia-agent channel set stable    # stable only (default)
-tia-agent channel set rc        # release candidates + stable
-tia-agent channel set beta      # beta + RC + stable
-tia-agent channel set alpha     # all prereleases + stable
+tia-agent channel
+tia-agent channel set stable
+tia-agent channel set rc
+tia-agent channel set beta
+tia-agent channel set alpha
 ```
 
-## Data and layout
+The channel controls which payload versions the CLI accepts during update and activation operations. It does not change the NuGet command used to install the CLI package.
 
-All installation data is stored under `%LOCALAPPDATA%\TiaAgent\`. See [LAYOUT.md](LAYOUT.md) for the complete filesystem layout and manifest schemas.
+## Uninstall
 
-## Uninstallation
-
-To remove the CLI tool:
+Remove the CLI global tool:
 
 ```powershell
-dotnet tool uninstall --global Industrix.TiaAgent.Cli
+dotnet tool uninstall --global TiaAgent.Cli
 ```
 
-To remove all installed versions and Add-In artifacts:
+Remove one installed payload version:
+
+```powershell
+tia-agent uninstall --version 0.3.0-beta.1
+```
+
+Remove every installed payload version:
 
 ```powershell
 tia-agent uninstall --all
 ```
 
-To remove a specific version:
-
-```powershell
-tia-agent uninstall --version 0.2.0-beta.1
-```
-
-See [UPDATING.md](UPDATING.md) for update procedures and [ROLLBACK.md](ROLLBACK.md) for rollback procedures.
+CLI package removal and payload removal are separate operations. See [LAYOUT.md](LAYOUT.md) for the installed files and manifests.

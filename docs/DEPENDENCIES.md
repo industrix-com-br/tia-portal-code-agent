@@ -1,20 +1,10 @@
 # Dependency Management Policy
 
-This document defines the dependency management, SDK pinning, package restore, and automated update policies for TIA Portal Code Agent.
+This document records the dependency and SDK configuration implemented by the repository.
 
-## Overview & Objectives
+## .NET SDK
 
-To guarantee reproducible local and CI builds, prevent dependency drift, and maintain supply chain security:
-1. **SDK Pinning:** The required .NET SDK version and roll-forward policy are declared centrally in `global.json`.
-2. **Central Package Management (CPM):** All NuGet package versions are managed centrally in `Directory.Packages.props`. Individual project files (`*.csproj`) reference dependencies without specifying package versions.
-3. **Locked Restore:** Package lock files are enabled via MSBuild (`RestorePackagesWithLockFile`), and locked restore mode (`RestoreLockedMode`) is enforced during CI runs.
-4. **Automated Dependabot Updates:** Dependabot scans NuGet and GitHub Actions dependencies weekly, generating controlled PRs with rate limits and structured commit messages.
-
----
-
-## .NET SDK Policy (`global.json`)
-
-The workspace specifies a supported .NET SDK version and roll-forward strategy in `global.json`:
+`global.json` pins the baseline SDK:
 
 ```json
 {
@@ -26,82 +16,52 @@ The workspace specifies a supported .NET SDK version and roll-forward strategy i
 }
 ```
 
-- **SDK Version:** `8.0.400` (.NET 8.0 SDK baseline).
-- **Roll Forward:** `latestFeature` allows building with any stable patch release within the .NET 8 feature band.
-- **Prerelease:** Set to `false` to avoid unintended SDK prerelease roll-forward.
+The CLI and Bridge target .NET 8. The TIA Portal Add-In targets .NET Framework 4.8 and uses the reference-assemblies package during builds.
 
----
+## Central package management
 
-## Central Package Management (`Directory.Packages.props`)
+`Directory.Packages.props` is the source of truth for NuGet package versions. Project files must reference packages without local `Version` attributes.
 
-NuGet dependencies across all projects are managed centrally using MSBuild Central Package Management.
+Current centrally managed packages:
 
-### Rules
+| Package | Version |
+|---|---|
+| `FluentAssertions` | `8.10.0` |
+| `Microsoft.CodeAnalysis.CSharp` | `4.11.0` |
+| `Microsoft.NET.Test.Sdk` | `18.8.1` |
+| `Microsoft.NETFramework.ReferenceAssemblies` | `1.0.3` |
+| `Moq` | `4.20.72` |
+| `PolySharp` | `1.15.0` |
+| `xunit` | `2.9.3` |
+| `xunit.runner.visualstudio` | `3.1.5` |
 
-1. `Directory.Packages.props` in the repository root holds all `<PackageVersion Include="PackageName" Version="X.Y.Z" />` declarations.
-2. Project files (`*.csproj`) MUST NOT include `Version="..."` on `<PackageReference>` elements.
-3. Transitive dependency pinning is enabled via `<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>`.
+Transitive dependency pinning is enabled through `CentralPackageTransitivePinningEnabled`.
 
-### Structure of `Directory.Packages.props`
+## Locked restore
+
+`Directory.Build.props` enables package lock files for all projects:
 
 ```xml
-<Project>
-  <PropertyGroup>
-    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <PackageVersion Include="FluentAssertions" Version="8.10.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
-    <PackageVersion Include="Moq" Version="4.20.72" />
-    <PackageVersion Include="PolySharp" Version="1.15.0" />
-    <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
-  </ItemGroup>
-</Project>
+<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+<RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
 ```
 
----
+Local restore may update `packages.lock.json`. CI fails when committed lock files are missing or inconsistent.
 
-## Locked Restore & CI Enforcement
+## Dependabot
 
-To prevent non-deterministic dependency resolution:
+`.github/dependabot.yml` monitors NuGet and GitHub Actions dependencies. Changes produced by Dependabot must pass the normal pull-request validation.
 
-1. `Directory.Build.props` enables lock files globally:
-   ```xml
-   <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-   <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
-   ```
-2. During local restore, NuGet generates/updates `packages.lock.json` per project.
-3. In CI builds (`CI=true`), NuGet runs in **locked mode**, failing the build if `packages.lock.json` is missing or out of sync.
+## Adding or upgrading a package
 
----
+1. Add or update the package version in `Directory.Packages.props`.
+2. Add the versionless `PackageReference` to the required project.
+3. Run `dotnet restore TiaAgent.sln`.
+4. Review and commit the changed lock files.
+5. Run `.\build.ps1 test`.
 
-## Dependabot & Update Automation
+## External runtime dependencies
 
-Dependabot is configured in `.github/dependabot.yml` to monitor both NuGet packages and GitHub Actions.
+Mimo CLI, OpenCode, Claude Code CLI, TiaMcpServer, TIA Portal, and Siemens Public API assemblies are external prerequisites. They are not NuGet dependencies bundled by this repository.
 
-### Dependabot Rules
-
-- **Frequency:** Weekly checks.
-- **PR Concurrency:** Maximum 5 open PRs per ecosystem to maintain manageable review scope.
-- **Commit Formatting:** Commit messages are prefixed with `deps`.
-- **Target Branch:** `main`.
-
----
-
-## Adding or Upgrading Dependencies
-
-### Adding a New Dependency
-1. Add `<PackageVersion Include="Package.Name" Version="X.Y.Z" />` to `Directory.Packages.props`.
-2. Add `<PackageReference Include="Package.Name" />` to the relevant `.csproj` file(s).
-3. Run `dotnet restore` locally to update lock files.
-4. Commit both `Directory.Packages.props`, the project file(s), and updated lock files.
-
-### Upgrading an Existing Dependency
-1. Update the `Version` attribute in `Directory.Packages.props`.
-2. Run `dotnet restore` to update `packages.lock.json`.
-3. Run `dotnet test` to verify zero regression.
-4. Commit the changes.
+Do not document a minimum external-tool version unless the repository enforces or tests that version.
