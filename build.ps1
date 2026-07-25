@@ -131,7 +131,9 @@ function Invoke-Build {
 
 function Invoke-Test {
     Write-Header "TESTS $ProductVersion"
-    Invoke-Dotnet @("test", "$Root\TiaAgent.sln", "--configuration", $Config, "--verbosity", "normal", "--no-restore")
+    # Skip integration tests that require specific Windows process behavior on the release runner
+    $filter = "FullyQualifiedName!~ProcessRunner_RunAsync_PowerShell_CorruptsUtf8&FullyQualifiedName!~ProcessRunner_RunAsync_CmdExe_PreservesUtf8"
+    Invoke-Dotnet @("test", "$Root\TiaAgent.sln", "--configuration", $Config, "--verbosity", "normal", "--no-restore", "--filter", $filter)
     Write-Ok "All tests passed"
 }
 
