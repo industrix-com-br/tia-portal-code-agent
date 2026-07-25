@@ -11,7 +11,7 @@ language: en-US
 
 # Architecture
 
-This document describes the architecture implemented by the current repository. Future capabilities belong in the product specification or an ADR and must not be presented here as shipped behavior.
+This document describes the architecture implemented by the current repository. Future capabilities belong in the product specification and must not be presented here as shipped behavior.
 
 ## Product boundary
 
@@ -165,4 +165,4 @@ When this document conflicts with implementation, verify against:
 - `.github/workflows/pipeline.yml`;
 - tests covering architecture, payload bundling, commands, and runtimes.
 
-Architectural changes should update this file and, when they introduce a durable design decision, add an ADR under `docs/adr/`.
+Architectural changes must update this file and record any durable design decision in a tracked document.
