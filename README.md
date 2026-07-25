@@ -114,6 +114,7 @@ See the [CLI Reference](docs/CLI.md) or run `tia-agent --help`.
 - [Documentation Index](docs/README.md)
 - [Installation Guide](docs/INSTALLATION.md)
 - [CLI Reference](docs/CLI.md)
+- [Configuration Reference](docs/CONFIGURATION.md)
 - [Running End-to-End](docs/RUN.md)
 - [Runtime Configuration](docs/RUNTIME.md)
 - [Updating](docs/UPDATING.md)
