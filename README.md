@@ -75,18 +75,27 @@ For contributors building and packaging the Add-In, Visual Studio 2022 and an in
 
 ## Installation
 
-```powershell
-# Stable
-dotnet tool install --global TiaAgent.Cli
+> [!IMPORTANT]
+> The project currently publishes only prerelease versions such as `alpha` and `beta`. Without `--prerelease` or an explicit `--version`, the .NET tool command searches only for a stable release and may report that `TiaAgent.Cli` was not found even though prerelease packages exist.
 
-# Prerelease
+```powershell
+# Recommended while the project is in prerelease
 dotnet tool install --global TiaAgent.Cli --prerelease
+
+# Install a specific prerelease version
+dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.5
 
 # Install and activate the payload
 tia-agent install
 
 # Start services
 tia-agent start
+```
+
+After the first stable version is published, the CLI can be installed without additional options:
+
+```powershell
+dotnet tool install --global TiaAgent.Cli
 ```
 
 Restart TIA Portal, enable **TIA Portal Code Agent** under **Options > Settings > Add-Ins**, then right-click a supported project object and choose an action under **AI Code Agent**.
