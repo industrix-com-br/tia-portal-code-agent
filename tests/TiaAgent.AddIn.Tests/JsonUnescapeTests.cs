@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Encodings.Web;
 using FluentAssertions;
 using TiaAgent.AddIn.Bridge;
 using Xunit;
@@ -13,12 +12,6 @@ namespace TiaAgent.AddIn.Tests;
 /// </summary>
 public class JsonUnescapeTests
 {
-    static JsonUnescapeTests()
-    {
-        // Register CodePagesEncodingProvider so CP437 (and other OEM/legacy code pages)
-        // are available on .NET 8+, where they are not included by default.
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
     /// <summary>
     /// Extracts a JSON string value, handling escaped quotes within the string.
     /// This mirrors the production parsing logic but with proper escape-awareness.
