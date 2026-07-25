@@ -17,22 +17,25 @@ tia-agent channel
 
 ## Update the CLI package
 
-Latest stable release:
+> [!IMPORTANT]
+> The project currently publishes only prerelease CLI packages. Without `--prerelease` or an explicit `--version`, `dotnet tool update` searches for a stable version and can report that the package was not found or that no applicable update exists.
 
-```powershell
-dotnet tool update --global TiaAgent.Cli
-```
-
-Latest prerelease:
+Update to the latest prerelease:
 
 ```powershell
 dotnet tool update --global TiaAgent.Cli --prerelease
 ```
 
-Specific version:
+Update to a specific prerelease version:
 
 ```powershell
-dotnet tool update --global TiaAgent.Cli --version 0.3.0-beta.1
+dotnet tool update --global TiaAgent.Cli --version 0.3.0-beta.5
+```
+
+After a stable release is published, update to the latest stable version with:
+
+```powershell
+dotnet tool update --global TiaAgent.Cli
 ```
 
 ## Install and activate the new payload
@@ -48,7 +51,7 @@ The command validates the bundled payload, installs it side-by-side under `%LOCA
 For a development or diagnostic payload directory:
 
 ```powershell
-tia-agent update --version 0.3.0-beta.1 --payload-dir C:\path\to\payload
+tia-agent update --version 0.3.0-beta.5 --payload-dir C:\path\to\payload
 ```
 
 ## Update channel
@@ -61,7 +64,7 @@ tia-agent channel set beta
 tia-agent channel set alpha
 ```
 
-The channel is validated by the CLI during update and activation. Use `--force` only when intentionally crossing a channel restriction.
+The channel is validated by the CLI during payload update and activation. It does not cause the .NET SDK to include prerelease NuGet packages. Use `--prerelease` or `--version` when updating the CLI package. Use `--force` only when intentionally crossing a payload channel restriction.
 
 ## Verify the update
 
