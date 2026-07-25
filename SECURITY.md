@@ -1,47 +1,47 @@
 # Security Policy
 
-## 1. Safety and Security Overview
+## Safety and security overview
 
-TIA Portal Code Agent operates within Siemens TIA Portal industrial automation environments. Safety and project integrity are non-negotiable priorities.
+TIA Portal Code Agent operates in industrial engineering environments. Project integrity, credential protection, and safe failure behavior are mandatory.
 
-For full architectural details on trust boundaries, permissions, least privilege, prompt injection defense, and approval controls, see the authoritative specification in [`docs/spec/SECURITY_MODEL.md`](docs/spec/SECURITY_MODEL.md).
+The maintained technical security model is [`docs/spec/SECURITY_MODEL.md`](docs/spec/SECURITY_MODEL.md).
 
-### Baseline Security Controls
+Current baseline controls:
 
-- **MVP Read-Only Enforcement**: The MVP engine is strictly read-only (`<TIA.ReadOnly />` permission). No write operations, PLC downloads, safety modifications, or hardware configuration changes are permitted.
-- **Local Loopback Binding Only**: All HTTP and IPC service endpoints bind strictly to loopback (`127.0.0.1`). Remote or network-exposed endpoints are strictly prohibited.
-- **Least-Privilege Manifest**: Add-In manifests declare only the minimal required Siemens Openness permissions. `<UnrestrictedAccess />` is prohibited.
-- **Untrusted Engineering Data**: TIA Portal project content (comments, block text, tag tables, symbol names) is treated as untrusted data. Project text cannot grant permissions or alter tool policy.
-- **Supply-Chain Integrity**: Siemens proprietary binaries are never committed to source control. Third-party dependencies are pinned and audited.
+- **Read-only product workflow:** the Add-In exposes explanations, reviews, and change proposals. It does not implement a project-change approval or apply workflow.
+- **Current manifest permission:** `src/TiaAgent.AddIn/Config.xml` requests `TIA.ReadWrite` even though the product workflow is read-only. This mismatch is documented and requires implementation and V21 host validation before the permission can be reduced safely.
+- **Loopback services:** Bridge and runtime-server endpoints bind to `127.0.0.1`.
+- **Authenticated Bridge API:** protected endpoints use the local bearer token stored in `%LOCALAPPDATA%\TiaAgent\bridge.token`.
+- **Untrusted engineering data:** project content cannot grant permission, approve a change, or alter tool policy.
+- **Supply-chain boundary:** Siemens runtime assemblies are not committed or bundled in the NuGet payload.
 
-## 2. Supported Versions
+Unsupported product behavior includes direct project writes, PLC download, online control, safety-program modification, hardware or network changes, and unattended project-wide refactoring.
 
-Security updates and vulnerability fixes are provided for the following versions:
+## Supported baseline
 
-| Component | Supported Version | Notes |
-| --- | --- | --- |
-| TIA Portal | V21 | Target platform |
-| .NET Target | .NET Framework 4.8 / .NET 8.0 | net48 (Add-In) / net8.0 (Bridge & Tools) |
-| TiaAgent Release | Latest stable (0.0.x / 0.2.x) | Active release stream |
+Security fixes target the current maintained product line and repository baseline:
 
-## 3. Reporting a Vulnerability
+| Component | Baseline |
+|---|---|
+| TIA Portal | V21 |
+| Add-In | .NET Framework 4.8 |
+| Bridge and CLI | .NET 8 |
+| Operating system | Windows x64 supported by the validated V21 environment |
 
-We take the security of TIA Portal Code Agent seriously. If you discover or suspect a security vulnerability, please report it responsibly:
+Exact supported product versions and tested TIA Portal update levels must be stated in each release. Do not infer support from old prerelease numbers in documentation.
 
-### How to Report
+## Reporting a vulnerability
 
-- **Private Vulnerability Reporting**: Use GitHub Private Vulnerability Reporting on the repository (via **Security → Advisory → New draft advisory**).
-- **Direct Email**: If private vulnerability reporting is unavailable, email `security@industrix.com.br` or contact the maintainer specified in [`.github/CODEOWNERS`](.github/CODEOWNERS).
+Use GitHub Private Vulnerability Reporting through **Security > Advisories > New draft security advisory**.
 
-### What to Include
+When private vulnerability reporting is unavailable, email `security@industrix.com.br` or contact the maintainer identified by [`.github/CODEOWNERS`](.github/CODEOWNERS).
 
-- A detailed description of the vulnerability and potential impact.
-- Steps to reproduce or proof-of-concept code.
-- Affected components (e.g. Add-In, Bridge, Runtime Supervisor, OpenCode client).
-- Any mitigation or suggested fixes if available.
+Include:
 
-### Disclosure Policy
+- a description of the issue and potential impact;
+- reproducible steps or a proof of concept;
+- affected components and versions;
+- relevant logs with credentials and project source removed;
+- suggested mitigation when available.
 
-- Please do **not** disclose security vulnerabilities publicly (such as via public GitHub issues or public forums) before maintainers have investigated and addressed the issue.
-- Maintainers will acknowledge receipt of security reports within 48 hours.
-- We will work with you to analyze, fix, and publish an advisory in a timely manner.
+Do not disclose the vulnerability publicly before maintainers have investigated and coordinated a fix or advisory.
