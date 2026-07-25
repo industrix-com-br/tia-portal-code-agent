@@ -108,8 +108,19 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
 
             AddInLogger.Info($"Selection captured: {selectionInfo} (type: {typeName}, correlation: {correlationId})");
 
+            // Extract source code from the selected object
+            var selectionSnapshot = SelectionSnapshotFactory.Create(selectedObj);
+            if (selectionSnapshot?.Source != null)
+            {
+                AddInLogger.Info($"Source extracted: {selectionSnapshot.Source.Length} chars (format: {selectionSnapshot.SourceFormat})");
+            }
+            else
+            {
+                AddInLogger.Warn($"No source extracted for {selectionInfo}");
+            }
+
             // Fire-and-forget: Bridge call on background thread, UI on completion
-            Task.Run(() => ExecuteViaBridgeAsync(action, selectionInfo, typeName, correlationId));
+            Task.Run(() => ExecuteViaBridgeAsync(action, selectionInfo, typeName, correlationId, selectionSnapshot));
         }
         catch (Exception ex)
         {
@@ -118,7 +129,7 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
         }
     }
 
-    private async Task ExecuteViaBridgeAsync(string action, string selectionInfo, string typeName, string correlationId)
+    private async Task ExecuteViaBridgeAsync(string action, string selectionInfo, string typeName, string correlationId, SelectionSnapshot? selectionSnapshot = null)
     {
         AddInLogger.Info($"Bridge execution started for '{action}' on thread " +
                          $"{Environment.CurrentManagedThreadId}");
@@ -141,6 +152,17 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
                 _ => "analyze this object"
             };
 
+            // Use the pre-extracted selection snapshot if provided, otherwise create a basic one
+            var selection = selectionSnapshot ?? new SelectionSnapshot
+            {
+                Name = selectionInfo,
+                ObjectType = typeName,
+                RuntimeType = "",
+                PlcName = "",
+                TiaPath = selectionInfo,
+                Language = ""
+            };
+
             var request = new BridgeTaskRequest
             {
                 ContractVersion = "1.0",
@@ -159,17 +181,21 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
                     Name = "Current Project",
                     Path = ""
                 },
-                Selection = new SelectionSnapshot
-                {
-                    Name = selectionInfo,
-                    ObjectType = typeName,
-                    RuntimeType = "",
-                    PlcName = "",
-                    TiaPath = selectionInfo,
-                    Language = ""
-                },
+                Selection = selection,
                 UserMessage = $"The user selected object \"{selectionInfo}\" of type \"{typeName}\" in TIA Portal. Please {actionDescription}."
             };
+
+            // Log source code diagnostics
+            if (selection.Source != null)
+            {
+                AddInLogger.Info($"Request includes source: {selection.Source.Length} chars, format: {selection.SourceFormat}");
+                var previewLength = Math.Min(selection.Source.Length, 200);
+                AddInLogger.Info($"Source preview: {selection.Source.Substring(0, previewLength)}...");
+            }
+            else
+            {
+                AddInLogger.Warn($"Request does NOT include source code!");
+            }
 
             AddInLogger.Info($"Starting Bridge task: agentId={agentId}, action={action}");
 

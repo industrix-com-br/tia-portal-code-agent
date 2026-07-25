@@ -266,15 +266,35 @@ public sealed class TaskManager : IDisposable
         var plcName = request.Selection?.PlcName ?? "Unknown";
         var language = request.Selection?.Language ?? "Unknown";
 
-        return $"You are a TIA Portal engineering assistant.\n"
+        var prompt = $"You are a TIA Portal engineering assistant.\n"
              + $"Action: {action}\n"
              + $"CorrelationId: {request.CorrelationId}\n"
              + $"Project: {projectName} ({projectId})\n"
              + $"Selection: {selectionName} ({selectionType})\n"
              + $"PLC: {plcName}\n"
              + $"Language: {language}\n"
-             + $"\n"
-             + $"User message: {request.UserMessage}";
+             + $"\n";
+
+        // Include source code if available
+        if (!string.IsNullOrEmpty(request.Selection?.Source))
+        {
+            prompt += $"PLC Source Code ({request.Selection.SourceFormat ?? "xml"}):\n"
+                     + $"```\n"
+                     + $"{request.Selection.Source}\n"
+                     + $"```\n"
+                     + $"\n";
+        }
+        else
+        {
+            prompt += $"WARNING: No PLC source code was extracted for this object.\n"
+                     + $"The object type '{selectionType}' may not support direct source export.\n"
+                     + $"Please provide analysis based on the object metadata only.\n"
+                     + $"\n";
+        }
+
+        prompt += $"User message: {request.UserMessage}";
+
+        return prompt;
     }
 
     public void Dispose()

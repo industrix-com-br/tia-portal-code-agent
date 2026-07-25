@@ -34,6 +34,10 @@
       <HintPath>$(TiaPublicApiDir)\Siemens.Engineering.Base.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Siemens.Engineering.Step7">
+      <HintPath>$(TiaPublicApiDir)\Siemens.Engineering.Step7.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Siemens.Engineering.AddIn.Base">
       <HintPath>$(TiaAddInApiDir)\Siemens.Engineering.AddIn.Base.dll</HintPath>
       <Private>false</Private>
