@@ -39,12 +39,10 @@ The repository does not contain a second MCP or Openness host. TIA project acces
 | Project | Responsibility | Target |
 |---|---|---|
 | `TiaAgent.AddIn` | TIA provider, selected-object snapshot, Bridge client, WPF result UI, logging | `net48` |
-| `TiaAgent.Application` | Application abstractions and reusable policies | project-defined .NET target |
-| `TiaAgent.Contracts` | DTOs, task contracts, runtime contracts, configuration models, errors | shared library |
+| `TiaAgent.Application` | Application abstractions and reusable policies | `netstandard2.0` |
+| `TiaAgent.Contracts` | DTOs, task contracts, runtime contracts, configuration models, errors | `netstandard2.0` |
 | `TiaAgent.Bridge` | Local HTTP API, task lifecycle, authentication, runtime adapters | `net8.0` |
 | `TiaAgent.Cli` | Payload installation, activation, rollback, diagnostics, runtime supervision | `net8.0` |
-
-`TiaAgent.ResponseCenter` source files exist in the repository but the project is not included in `TiaAgent.sln` and is not part of the current packaged product.
 
 ## Add-In flow
 
@@ -149,7 +147,7 @@ The tag workflow in `.github/workflows/pipeline.yml` runs the release build on t
 
 ## Dependency rules
 
-- Add-In code may depend on contracts and its Bridge client, but must remain compatible with the TIA Portal .NET Framework host.
+- Add-In code may depend on `netstandard2.0` contracts and application abstractions, but must remain compatible with the TIA Portal .NET Framework host.
 - Bridge and CLI may use .NET 8 libraries unavailable to the Add-In.
 - Siemens assemblies are resolved from the installed V21 Public API and must not be copied into source control or the NuGet payload.
 - Agent runtimes and `TiaMcpServer` are external prerequisites, not bundled executables.
