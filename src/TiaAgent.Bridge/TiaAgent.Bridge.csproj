@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TiaAgent.Bridge.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TiaAgent.Contracts\TiaAgent.Contracts.csproj" />
   </ItemGroup>
 </Project>

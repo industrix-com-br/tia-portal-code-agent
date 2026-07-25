@@ -61,8 +61,6 @@ public sealed class ProcessRunner : IDisposable
         string? stdinContent = null,
         CancellationToken cancellationToken = default)
     {
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
         Process? process = null;
 
         try
@@ -118,13 +116,16 @@ public sealed class ProcessRunner : IDisposable
 
             // ═══════════════════════════════════════════════════════════════════
             // BOUNDARY 1: Raw bytes from process stdout/stderr BEFORE decoding
-            // Read directly from BaseStream to capture exact bytes the process emitted.
-            // This is the FIRST point where we can observe the raw byte encoding.
+            // Read stdout and stderr CONCURRENTLY to avoid deadlocks when either
+            // stream fills the OS buffer. Both reads start before awaiting exit.
             // ═══════════════════════════════════════════════════════════════════
+            var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, linkedCts.Token);
+            var stderrTask = ReadAllBytesAsync(process.StandardError.BaseStream, linkedCts.Token);
+
             byte[] stdoutBytes, stderrBytes;
             try
             {
-                stdoutBytes = await ReadAllBytesAsync(process.StandardOutput.BaseStream, linkedCts.Token).ConfigureAwait(false);
+                stdoutBytes = await stdoutTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
@@ -133,8 +134,8 @@ public sealed class ProcessRunner : IDisposable
                 return new ProcessResult
                 {
                     ExitCode = -1,
-                    StdOut = stdout.ToString(),
-                    StdErr = stderr.ToString(),
+                    StdOut = "",
+                    StdErr = "",
                     TimedOut = true,
                     Error = $"Process timed out after {timeout.TotalSeconds} seconds"
                 };
@@ -146,8 +147,8 @@ public sealed class ProcessRunner : IDisposable
                 return new ProcessResult
                 {
                     ExitCode = -1,
-                    StdOut = stdout.ToString(),
-                    StdErr = stderr.ToString(),
+                    StdOut = "",
+                    StdErr = "",
                     Cancelled = true,
                     Error = "Process was cancelled"
                 };
@@ -155,7 +156,7 @@ public sealed class ProcessRunner : IDisposable
 
             try
             {
-                stderrBytes = await ReadAllBytesAsync(process.StandardError.BaseStream, linkedCts.Token).ConfigureAwait(false);
+                stderrBytes = await stderrTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -209,18 +210,15 @@ public sealed class ProcessRunner : IDisposable
                 _logger.Info($"ProcessRunner [BOUNDARY 2 - code points sample]: {FormatCodePoints(decodedStdout, 128)}");
             }
 
-            // Split decoded text into lines for progress reporting and StringBuilder storage
-            var stdoutLines = decodedStdout.Split(s_newlineSeparators, StringSplitOptions.None);
-            var stderrLines = decodedStderr.Split(s_newlineSeparators, StringSplitOptions.None);
-
-            foreach (var line in stdoutLines)
+            // Split for progress reporting ONLY — the decoded strings are the source of truth.
+            // Line splitting must be observational and must not become the source of returned output.
+            if (progress != null)
             {
-                lock (stdout) { stdout.AppendLine(line); }
-                progress?.Report(line);
-            }
-            foreach (var line in stderrLines)
-            {
-                lock (stderr) { stderr.AppendLine(line); }
+                var stdoutLines = decodedStdout.Split(s_newlineSeparators, StringSplitOptions.None);
+                foreach (var line in stdoutLines)
+                {
+                    progress.Report(line);
+                }
             }
 
             var exitCode = process.ExitCode;
@@ -229,8 +227,8 @@ public sealed class ProcessRunner : IDisposable
             return new ProcessResult
             {
                 ExitCode = exitCode,
-                StdOut = stdout.ToString(),
-                StdErr = stderr.ToString(),
+                StdOut = decodedStdout,
+                StdErr = decodedStderr,
                 RawStdoutBytes = stdoutBytes,
                 RawStderrBytes = stderrBytes
             };
@@ -241,8 +239,8 @@ public sealed class ProcessRunner : IDisposable
             return new ProcessResult
             {
                 ExitCode = -1,
-                StdOut = stdout.ToString(),
-                StdErr = stderr.ToString(),
+                StdOut = "",
+                StdErr = "",
                 Error = $"Failed to start process: {ex.Message}"
             };
         }

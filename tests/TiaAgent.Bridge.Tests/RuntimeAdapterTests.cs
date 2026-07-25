@@ -271,6 +271,233 @@ public class RuntimeAdapterTests
 
     #endregion
 
+    #region CommandResolver
+
+    [Fact]
+    public void CommandResolver_BareName_ExeAvailable_SelectsDirectExecution()
+    {
+        var resolved = CommandResolver.Resolve("dotnet", name => name == "dotnet.exe" ? @"C:\dotnet\dotnet.exe" : null);
+
+        resolved.FileName.Should().Be(@"C:\dotnet\dotnet.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.None);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\dotnet\dotnet.exe");
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_OnlyCmdAvailable_SelectsCmdExe()
+    {
+        var resolved = CommandResolver.Resolve("claude", name => name switch
+        {
+            "claude.cmd" => @"C:\Users\test\npm\claude.cmd",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be("cmd.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\Users\test\npm\claude.cmd");
+        resolved.Arguments.Should().Contain("/d");
+        resolved.Arguments.Should().Contain("/s");
+        resolved.Arguments.Should().Contain("/c");
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_OnlyBatAvailable_SelectsCmdExe()
+    {
+        var resolved = CommandResolver.Resolve("mytool", name => name switch
+        {
+            "mytool.bat" => @"C:\tools\mytool.bat",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be("cmd.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\tools\mytool.bat");
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_OnlyPs1Available_SelectsPowerShell()
+    {
+        var resolved = CommandResolver.Resolve("claude", name => name switch
+        {
+            "claude.ps1" => @"C:\Users\test\claude.ps1",
+            "pwsh.exe" => @"C:\Program Files\PowerShell\7\pwsh.exe",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be(@"C:\Program Files\PowerShell\7\pwsh.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.PowerShellCore);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\Users\test\claude.ps1");
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_OnlyPs1_NoPwsh_FallsBackToWindowsPowerShell()
+    {
+        var resolved = CommandResolver.Resolve("claude", name => name switch
+        {
+            "claude.ps1" => @"C:\Users\test\claude.ps1",
+            "powershell.exe" => @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.WindowsPowerShell);
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_ExePreferredOverPs1()
+    {
+        var resolved = CommandResolver.Resolve("claude", name => name switch
+        {
+            "claude.exe" => @"C:\claude\claude.exe",
+            "claude.ps1" => @"C:\Users\test\claude.ps1",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be(@"C:\claude\claude.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.None);
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_CmdPreferredOverPs1()
+    {
+        var resolved = CommandResolver.Resolve("claude", name => name switch
+        {
+            "claude.cmd" => @"C:\Users\test\npm\claude.cmd",
+            "claude.ps1" => @"C:\Users\test\claude.ps1",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be("cmd.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+    }
+
+    [Fact]
+    public void CommandResolver_ExplicitExe_DirectExecution()
+    {
+        var resolved = CommandResolver.Resolve(@"C:\claude\claude.exe");
+
+        resolved.FileName.Should().Be(@"C:\claude\claude.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.None);
+    }
+
+    [Fact]
+    public void CommandResolver_ExplicitCmd_UsesCmdExe()
+    {
+        var resolved = CommandResolver.Resolve(@"C:\tools\claude.cmd");
+
+        resolved.FileName.Should().Be("cmd.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\tools\claude.cmd");
+    }
+
+    [Fact]
+    public void CommandResolver_ExplicitBat_UsesCmdExe()
+    {
+        var resolved = CommandResolver.Resolve(@"C:\tools\claude.bat");
+
+        resolved.FileName.Should().Be("cmd.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+        resolved.ResolvedTargetPath.Should().Be(@"C:\tools\claude.bat");
+    }
+
+    [Fact]
+    public void CommandResolver_ExplicitPs1_UsesPwshFirst()
+    {
+        var resolved = CommandResolver.Resolve(@"C:\scripts\claude.ps1", name => name switch
+        {
+            "pwsh.exe" => @"C:\Program Files\PowerShell\7\pwsh.exe",
+            _ => null
+        });
+
+        resolved.FileName.Should().Be(@"C:\Program Files\PowerShell\7\pwsh.exe");
+        resolved.Wrapper.Should().Be(ProcessWrapper.PowerShellCore);
+    }
+
+    [Fact]
+    public void CommandResolver_BareName_NothingFound_ReturnsBareName()
+    {
+        var resolved = CommandResolver.Resolve("nonexistent_12345", _ => null);
+
+        resolved.FileName.Should().Be("nonexistent_12345");
+        resolved.Wrapper.Should().Be(ProcessWrapper.None);
+    }
+
+    [Fact]
+    public void CommandResolver_ComposeArguments_JoinsParts()
+    {
+        var resolved = new ResolvedCommand
+        {
+            FileName = "cmd.exe",
+            Arguments = new[] { "/d", "/s", "/c", "\"test.cmd\"" },
+            Wrapper = ProcessWrapper.Cmd,
+            ResolvedTargetPath = @"C:\test.cmd"
+        };
+
+        var composed = resolved.ComposeArguments("--version");
+        composed.Should().Contain("/d");
+        composed.Should().Contain("/s");
+        composed.Should().Contain("/c");
+        composed.Should().Contain("--version");
+    }
+
+    [Fact]
+    public void CommandResolver_ComposeArguments_EmptyExtra()
+    {
+        var resolved = new ResolvedCommand
+        {
+            FileName = "claude.exe",
+            Wrapper = ProcessWrapper.None,
+            ResolvedTargetPath = "claude.exe"
+        };
+
+        var composed = resolved.ComposeArguments("");
+        composed.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CommandResolver_CmdExe_PreservesUtf8_Integration()
+    {
+        // Integration test: cmd.exe does NOT re-encode child process stdout,
+        // so ProcessRunner reads raw UTF-8 bytes via StandardOutputEncoding = UTF8.
+        using var runner = new ProcessRunner(_logger);
+
+        // Create a temporary .cmd script that echoes the UTF-8 payload
+        var tempDir = Path.Combine(Path.GetTempPath(), $"tia-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var cmdFile = Path.Combine(tempDir, "utf8test.cmd");
+        var testString = "Ação — 🔴 🟡 🟢 → ─ ┐ ├ │";
+        // Write the .cmd script that uses chcp 65001 and echoes the test string
+        File.WriteAllText(cmdFile, $"@echo off\r\nchcp 65001 >nul\r\necho {testString}\r\n");
+
+        try
+        {
+            var resolved = CommandResolver.Resolve("utf8test", name => name switch
+            {
+                "utf8test.cmd" => cmdFile,
+                _ => null
+            });
+
+            resolved.FileName.Should().Be("cmd.exe");
+            resolved.Wrapper.Should().Be(ProcessWrapper.Cmd);
+
+            var args = resolved.ComposeArguments("");
+            var result = await runner.RunAsync(
+                resolved.FileName, args, null,
+                TimeSpan.FromSeconds(10));
+
+            result.ExitCode.Should().Be(0);
+            result.StdOut.Should().Contain(testString,
+                "cmd.exe must preserve UTF-8 output without corruption");
+        }
+        finally
+        {
+            try { File.Delete(cmdFile); } catch { }
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
+    #endregion
+
     #region FakeRuntime (for integration testing)
 
     [Fact]

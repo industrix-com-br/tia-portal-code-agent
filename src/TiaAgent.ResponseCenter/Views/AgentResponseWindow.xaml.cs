@@ -13,7 +13,6 @@ namespace TiaAgent.ResponseCenter.Views;
 public partial class AgentResponseWindow : Window
 {
     private readonly AgentResponseViewModel _viewModel;
-    private string? _rawResponse;
 
     public AgentResponseWindow(AgentResponseViewModel viewModel)
     {
@@ -39,7 +38,6 @@ public partial class AgentResponseWindow : Window
     /// </summary>
     public void SetResponse(string response)
     {
-        _rawResponse = response;
         RenderResponse(response);
     }
 
