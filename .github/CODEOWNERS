@@ -1,0 +1,6 @@
+# Default owners for everything in the repo
+* @industrix-com-br/maintainers
+
+# Security policy and GitHub workflows require maintainer review
+/SECURITY.md @industrix-com-br/maintainers
+/.github/ @industrix-com-br/maintainers
