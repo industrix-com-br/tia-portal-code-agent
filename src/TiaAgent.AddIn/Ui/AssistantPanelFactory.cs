@@ -416,10 +416,10 @@ public static class AssistantPanelFactory
             {
                 try
                 {
-                    // Get plain text from FlowDocument for clipboard
-                    var textRange = new System.Windows.Documents.TextRange(
-                        document!.ContentStart, document.ContentEnd);
-                    System.Windows.Clipboard.SetText(textRange.Text);
+                    // The raw Markdown is the source of truth. Do not reconstruct
+                    // clipboard content from the rendered FlowDocument because that
+                    // drops Markdown markers and changes code/table whitespace.
+                    System.Windows.Clipboard.SetText(markdownContent);
                     copyButton.Content = "Copied!";
                     // Reset after 2 seconds
                     var timer = new System.Windows.Threading.DispatcherTimer
