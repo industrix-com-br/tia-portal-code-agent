@@ -342,7 +342,7 @@ public static class AssistantPanelFactory
             };
 
             // Render content into FlowDocument.
-            // Strategy: SimpleMarkdownFlowDocumentRenderer → PlainText fallback.
+            // Strategy: SimpleMarkdownFlowDocumentRenderer → error document if rendering fails.
             FlowDocument? document = null;
             string renderPath = "none";
             string rendererClass = "none";
@@ -351,27 +351,19 @@ public static class AssistantPanelFactory
 
             if (!string.IsNullOrWhiteSpace(markdownContent))
             {
-                try
-                {
-                    var renderer = new SimpleMarkdownFlowDocumentRenderer();
-                    rendererClass = nameof(SimpleMarkdownFlowDocumentRenderer);
-                    AddInLogger.Info($"Renderer class: {rendererClass}");
+                var renderer = new SimpleMarkdownFlowDocumentRenderer();
+                rendererClass = nameof(SimpleMarkdownFlowDocumentRenderer);
+                AddInLogger.Info($"Renderer class: {rendererClass}");
 
-                    document = renderer.Render(markdownContent);
-                    if (document != null)
-                    {
-                        renderPath = "markdown";
-                        AddInLogger.Info($"Markdown rendered successfully. Blocks: {document.Blocks.Count}");
-                    }
-                    else
-                    {
-                        AddInLogger.Warn("Markdown renderer returned null — falling back to plain text.");
-                    }
-                }
-                catch (Exception ex)
+                document = renderer.Render(markdownContent);
+                if (document != null)
                 {
-                    AddInLogger.Warn($"Markdown rendering failed, falling back to plain text: {ex.GetType().Name}: {ex.Message}");
-                    AddInLogger.Warn($"Full exception: {ex}");
+                    renderPath = "markdown";
+                    AddInLogger.Info($"Markdown rendered successfully. Blocks: {document.Blocks.Count}");
+                }
+                else
+                {
+                    AddInLogger.Warn("Markdown renderer returned null — using empty placeholder.");
                 }
             }
             else
@@ -379,7 +371,7 @@ public static class AssistantPanelFactory
                 AddInLogger.Info("Markdown content is empty or whitespace — using empty placeholder.");
             }
 
-            // Fallback: plain text WPF
+            // Fallback: plain text or empty only when renderer returns null (empty input)
             if (document == null)
             {
                 document = string.IsNullOrWhiteSpace(markdownContent)
@@ -534,8 +526,8 @@ public static class AssistantPanelFactory
 
             // Renderer-specific or unknown errors — do NOT disable WPF.
             // The WPF window itself may still work; only the renderer failed.
-            // The next call will use plain text fallback instead.
-            AddInLogger.Warn($"Non-threading error ({ex.GetType().Name}) — WPF will be retried with plain text fallback.");
+            // The next call will show the error in the WPF window instead.
+            AddInLogger.Warn($"Non-threading error ({ex.GetType().Name}) — WPF will be retried.");
             return false;
         }
     }
