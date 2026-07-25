@@ -41,8 +41,6 @@ Repository projects:
 - `TiaAgent.Bridge` — local HTTP API, tasks, authentication, and runtime adapters.
 - `TiaAgent.Cli` — installation, version activation, update, rollback, diagnostics, and runtime supervision.
 
-The response window implementation is part of the Add-In source tree. `TiaAgent.ResponseCenter` files are not part of the current solution and must not be treated as a shipped component unless the solution and packaging are intentionally updated.
-
 ## Supported runtimes
 
 | Runtime | ID | Supported mode |
