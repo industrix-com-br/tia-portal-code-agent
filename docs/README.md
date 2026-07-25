@@ -6,6 +6,7 @@ This directory contains maintained user guides, contributor references, maintain
 
 - [Installation](INSTALLATION.md) — install the CLI, payload, and TIA Portal Add-In.
 - [CLI reference](CLI.md) — verified commands, subcommands, and options.
+- [Configuration](CONFIGURATION.md) — files, fields, environment variables, ports, and generated credentials.
 - [Running end-to-end](RUN.md) — build, configure, start, and validate the complete system.
 - [Runtime configuration](RUNTIME.md) — select and configure Mimo, OpenCode, or Claude Code.
 - [Troubleshooting](TROUBLESHOOTING.md) — diagnose installation, runtime, and Add-In problems.
