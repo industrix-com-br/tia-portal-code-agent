@@ -11,7 +11,7 @@ using TiaAgent.AddIn.Diagnostics;
 
 namespace TiaAgent.AddIn.Ui;
 
-internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssistantExecutionLifetime, IDisposable
+internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDisposable
 {
     private static readonly Regex s_runtimePrefixRegex = new(
         @"^\[Runtime:\s*(.+?)\]\s*\n\s*\n",
@@ -235,6 +235,11 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
         _window.Loaded += handler;
     }
 
+    internal void HookClosed(Action callback)
+    {
+        _window.Closed += (_, __) => callback();
+    }
+
     /// <summary>
     /// Shows the underlying WPF Window. Must be called on the WPF thread.
     /// </summary>
@@ -243,14 +248,17 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
         _window.Show();
     }
 
+    /// <summary>
+    /// Closes the underlying WPF Window. Must be called on the WPF thread.
+    /// </summary>
+    internal void CloseWindow()
+    {
+        _window.Close();
+    }
+
     public bool IsClosed => Volatile.Read(ref _isClosed) != 0;
 
     public CancellationToken CancellationToken => _cancellationToken;
-
-    public void CompleteExecution()
-    {
-        Dispose();
-    }
 
     public void Dispose()
     {

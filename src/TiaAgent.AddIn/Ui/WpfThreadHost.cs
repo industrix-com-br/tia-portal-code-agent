@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Windows.Threading;
 using TiaAgent.AddIn.Diagnostics;
@@ -12,6 +13,12 @@ namespace TiaAgent.AddIn.Ui;
 /// </summary>
 internal sealed class WpfThreadHost : IDisposable
 {
+    // Strong references to hosts whose windows are still open.
+    // Prevents GC from collecting the host (and its dispatcher thread)
+    // while the user is viewing results. Entries are removed when
+    // the window's Closed event fires.
+    private static readonly ConcurrentDictionary<int, WpfThreadHost> s_activeHosts = new();
+
     private readonly ManualResetEventSlim _dispatcherReady = new(false);
     private readonly TaskCompletionSource<bool> _windowReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _closeCts = new();
@@ -89,7 +96,8 @@ internal sealed class WpfThreadHost : IDisposable
         // All work runs on the WPF thread in the correct order:
         // 1. Create window
         // 2. Hook Loaded event (before Show, so we catch it)
-        // 3. Show window
+        // 3. Hook Closed event to trigger dispatcher shutdown
+        // 4. Show window
         _dispatcher.Invoke(() =>
         {
             window = windowFactory(_closeCts.Token);
@@ -101,8 +109,21 @@ internal sealed class WpfThreadHost : IDisposable
                 _windowReady.TrySetResult(true);
             });
 
+            window.HookClosed(() =>
+            {
+                AddInLogger.Info(
+                    $"Window.Closed received. (thread={Environment.CurrentManagedThreadId}, " +
+                    $"dispatcher={_dispatcher?.GetHashCode()}, visible={window.IsClosed == false})");
+                s_activeHosts.TryRemove(_hostThread?.ManagedThreadId ?? 0, out _);
+                RequestShutdown(reason: "window-closed", caller: "Window.Closed");
+            });
+
             window.ShowWindow();
-            AddInLogger.Info($"WPF window Show() returned. (thread={Environment.CurrentManagedThreadId})");
+
+            // Keep a strong reference so GC cannot collect the host while the window is open.
+            s_activeHosts[_hostThread?.ManagedThreadId ?? 0] = this;
+
+            AddInLogger.Info($"WPF window shown. (thread={Environment.CurrentManagedThreadId})");
         });
 
         return window!;
@@ -121,13 +142,15 @@ internal sealed class WpfThreadHost : IDisposable
     /// Requests shutdown of the WPF Dispatcher and signals cancellation.
     /// Non-blocking: enqueues shutdown on the Dispatcher.
     /// </summary>
-    public void RequestShutdown()
+    public void RequestShutdown(string? reason = null, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         if (_shutdownRequested)
             return;
 
         _shutdownRequested = true;
-        AddInLogger.Info($"WPF dispatcher shutdown requested. (thread={_hostThread?.ManagedThreadId})");
+        AddInLogger.Info(
+            $"WPF dispatcher shutdown requested. (thread={_hostThread?.ManagedThreadId}, " +
+            $"reason={reason ?? "unspecified"}, caller={caller ?? "unknown"})");
 
         if (!_closeCts.IsCancellationRequested)
             _closeCts.Cancel();
@@ -163,7 +186,11 @@ internal sealed class WpfThreadHost : IDisposable
         if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
             return;
 
-        RequestShutdown();
+        AddInLogger.Info(
+            $"WPF host disposing. (thread={_hostThread?.ManagedThreadId}, " +
+            $"shutdownAlreadyRequested={_shutdownRequested})");
+
+        RequestShutdown(reason: "host-dispose");
 
         // Give the thread a moment to exit, then let it die as a background thread.
         WaitForShutdown(TimeSpan.FromSeconds(1));
