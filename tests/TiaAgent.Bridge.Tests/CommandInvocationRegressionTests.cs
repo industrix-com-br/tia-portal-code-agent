@@ -30,6 +30,23 @@ public class CommandInvocationRegressionTests
     }
 
     [Fact]
+    public void CmdWrapper_UsesConfiguredWrapperArguments()
+    {
+        var resolved = new ResolvedCommand
+        {
+            FileName = "cmd.exe",
+            Arguments = new[] { "/d", "/q", "/c" },
+            Wrapper = ProcessWrapper.Cmd,
+            ResolvedTargetPath = @"C:\Program Files\nodejs\claude.cmd"
+        };
+
+        var arguments = resolved.ComposeArguments(string.Empty);
+
+        arguments.Should().Be(
+            "/d /q /c \"\"C:\\Program Files\\nodejs\\claude.cmd\"\"");
+    }
+
+    [Fact]
     public void CmdWrapper_QuotesTheTargetWhenThereAreNoExtraArguments()
     {
         var resolved = CommandResolver.Resolve(@"C:\Program Files\nodejs\claude.cmd");
@@ -106,6 +123,111 @@ public class CommandInvocationRegressionTests
         finally
         {
             try { File.Delete(batchPath); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task ProcessRunner_WhenOutputStreamsCloseButProcessKeepsRunning_ReturnsTimedOut()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var markerPath = Path.Combine(Path.GetTempPath(), $"tia-wait-timeout-{Guid.NewGuid():N}.ready");
+        var scriptPath = await CreateCloseOutputHandlesScriptAsync(markerPath);
+        try
+        {
+            using var runner = new ProcessRunner(_logger);
+
+            var result = await runner.RunAsync(
+                "powershell.exe",
+                $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+                workingDirectory: null,
+                timeout: TimeSpan.FromSeconds(5),
+                cancellationToken: CancellationToken.None);
+
+            File.Exists(markerPath).Should().BeTrue("the child must close its output handles before the timeout");
+            result.TimedOut.Should().BeTrue();
+            result.Cancelled.Should().BeFalse();
+            result.Error.Should().Contain("waiting for exit");
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { }
+            try { File.Delete(markerPath); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task ProcessRunner_WhenCancelledAfterOutputStreamsClose_ReturnsCancelled()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var markerPath = Path.Combine(Path.GetTempPath(), $"tia-wait-cancel-{Guid.NewGuid():N}.ready");
+        var scriptPath = await CreateCloseOutputHandlesScriptAsync(markerPath);
+        try
+        {
+            using var runner = new ProcessRunner(_logger);
+            using var cts = new CancellationTokenSource();
+
+            var runTask = runner.RunAsync(
+                "powershell.exe",
+                $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+                workingDirectory: null,
+                timeout: TimeSpan.FromSeconds(30),
+                cancellationToken: cts.Token);
+
+            await WaitForFileAsync(markerPath, TimeSpan.FromSeconds(10));
+            cts.Cancel();
+
+            var result = await runTask;
+
+            result.Cancelled.Should().BeTrue();
+            result.TimedOut.Should().BeFalse();
+            result.Error.Should().Be("Process was cancelled");
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { }
+            try { File.Delete(markerPath); } catch { }
+        }
+    }
+
+    private static async Task<string> CreateCloseOutputHandlesScriptAsync(string markerPath)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"tia-close-output-{Guid.NewGuid():N}.ps1");
+        var escapedMarkerPath = markerPath.Replace("'", "''", StringComparison.Ordinal);
+        var script =
+            "$source = @'\r\n" +
+            "using System;\r\n" +
+            "using System.Runtime.InteropServices;\r\n" +
+            "public static class NativeMethods\r\n" +
+            "{\r\n" +
+            "    [DllImport(\"kernel32.dll\", SetLastError = true)]\r\n" +
+            "    public static extern IntPtr GetStdHandle(int nStdHandle);\r\n" +
+            "    [DllImport(\"kernel32.dll\", SetLastError = true)]\r\n" +
+            "    public static extern bool CloseHandle(IntPtr hObject);\r\n" +
+            "}\r\n" +
+            "'@\r\n" +
+            "Add-Type -TypeDefinition $source\r\n" +
+            "[NativeMethods]::CloseHandle([NativeMethods]::GetStdHandle(-11)) | Out-Null\r\n" +
+            "[NativeMethods]::CloseHandle([NativeMethods]::GetStdHandle(-12)) | Out-Null\r\n" +
+            $"[System.IO.File]::WriteAllText('{escapedMarkerPath}', 'ready')\r\n" +
+            "Start-Sleep -Seconds 30\r\n";
+
+        await File.WriteAllTextAsync(scriptPath, script);
+        return scriptPath;
+    }
+
+    private static async Task WaitForFileAsync(string path, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!File.Exists(path))
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException($"Timed out waiting for marker file '{path}'.");
+
+            await Task.Delay(50);
         }
     }
 }
