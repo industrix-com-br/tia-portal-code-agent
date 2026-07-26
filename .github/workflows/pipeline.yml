@@ -1,209 +1,26 @@
-name: Pipeline
+name: Cleanup release trigger
 
 on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    types:
+      - synchronize
 
 permissions:
-  contents: read
-
-concurrency:
-  group: pipeline-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  contents: write
 
 jobs:
-  ci:
-    name: CI
-    if: github.ref_type != 'tag'
-    runs-on: windows-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-
-      - name: Validate repository inputs
-        shell: pwsh
-        run: |
-          $required = @(
-            "TiaAgent.sln",
-            "global.json",
-            "Directory.Build.props",
-            "Directory.Packages.props",
-            "build.ps1",
-            "src/TiaAgent.AddIn/TiaAgent.AddIn.csproj",
-            "src/TiaAgent.Bridge/TiaAgent.Bridge.csproj",
-            "src/TiaAgent.Cli/TiaAgent.Cli.csproj"
-          )
-          foreach ($path in $required) {
-            if (-not (Test-Path -LiteralPath $path)) {
-              throw "Required CI input not found: $path"
-            }
-          }
-
-          $testProjects = @(Get-ChildItem -Path tests -Filter *.csproj -Recurse -File)
-          if ($testProjects.Count -eq 0) {
-            throw "No test projects were discovered under tests/."
-          }
-
-      - name: Restore
-        run: dotnet restore TiaAgent.sln --locked-mode
-
-      - name: Build
-        run: dotnet build TiaAgent.sln --configuration Release --no-restore
-
-      - name: Test all projects
-        shell: pwsh
-        run: |
-          $resultsRoot = Join-Path $PWD "artifacts/test-results"
-          New-Item -ItemType Directory -Path $resultsRoot -Force | Out-Null
-
-          $projects = @(Get-ChildItem -Path tests -Filter *.csproj -Recurse -File | Sort-Object FullName)
-          if ($projects.Count -eq 0) {
-            throw "No test projects were discovered under tests/."
-          }
-
-          $failed = @()
-          $summary = @(
-            "## Automated tests",
-            "",
-            "| Project | Result |",
-            "|---|---|"
-          )
-
-          foreach ($project in $projects) {
-            $relativePath = [IO.Path]::GetRelativePath($PWD, $project.FullName).Replace("\", "/")
-            $projectName = $project.BaseName
-            $projectResults = Join-Path $resultsRoot $projectName
-            New-Item -ItemType Directory -Path $projectResults -Force | Out-Null
-
-            Write-Host "::group::Test $relativePath"
-            & dotnet test $project.FullName `
-              --configuration Release `
-              --no-build `
-              --no-restore `
-              --logger "trx;LogFileName=$projectName.trx" `
-              --results-directory $projectResults
-            $exitCode = $LASTEXITCODE
-            Write-Host "::endgroup::"
-
-            if ($exitCode -eq 0) {
-              $summary += "| ``$relativePath`` | PASS |"
-            } else {
-              $failed += $relativePath
-              $summary += "| ``$relativePath`` | FAIL |"
-              Write-Host "::error file=$relativePath::Test project failed with exit code $exitCode."
-            }
-          }
-
-          $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-
-          if ($failed.Count -gt 0) {
-            throw "Test projects failed: $($failed -join ', ')"
-          }
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-${{ github.run_id }}
-          path: artifacts/test-results
-          if-no-files-found: error
-          retention-days: 14
-
-  publish:
-    name: Publish NuGet
-    if: github.ref_type == 'tag' || github.head_ref == 'release/v0.3.0-beta.7-trigger'
-    runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
-    timeout-minutes: 30
-    permissions:
-      contents: write
-      id-token: write
+  cleanup:
+    name: Remove temporary release branch
+    if: github.head_ref == 'release/v0.3.0-beta.7-trigger'
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'pull_request' && '9772a88f397588e757881aa73d89f8638fcff2f9' || github.ref }}
-          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        env:
-          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
-        with:
-          global-json-file: global.json
-
-      - name: Extract version
-        id: version
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_EVENT_NAME -eq "pull_request" -and "${{ github.head_ref }}" -eq "release/v0.3.0-beta.7-trigger") {
-            "value=0.3.0-beta.7" >> $env:GITHUB_OUTPUT
-            "tag=v0.3.0-beta.7" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
-            throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
-          }
-          "value=$($Matches.version)" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-
-      - name: Verify release tag
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
-          if (-not $remoteTag) {
-            throw "Release tag '$tag' does not exist on origin."
-          }
-
-      - name: Build release
-        shell: pwsh
-        env:
-          TIA_SIGNING_CERT_PFX_BASE64: ${{ secrets.TIA_SIGNING_CERT_PFX_BASE64 }}
-          TIA_SIGNING_CERT_PASSWORD: ${{ secrets.TIA_SIGNING_CERT_PASSWORD }}
-          TIA_SIGNING_CERT_THUMBPRINT: ${{ secrets.TIA_SIGNING_CERT_THUMBPRINT }}
-        run: ./build.ps1 release -Version "${{ steps.version.outputs.value }}"
-
-      - name: Login to NuGet
-        id: nuget
-        uses: NuGet/login@v1
-        with:
-          user: ${{ secrets.NUGET_USER }}
-
-      - name: Publish NuGet package
-        shell: pwsh
-        run: |
-          $version = "${{ steps.version.outputs.value }}"
-          $package = Get-Item "artifacts/TiaAgent.Cli.$version.nupkg"
-          dotnet nuget push $package.FullName `
-            --source "https://api.nuget.org/v3/index.json" `
-            --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" `
-            --skip-duplicate
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: 9772a88f397588e757881aa73d89f8638fcff2f9
-          name: TIA Portal Code Agent ${{ steps.version.outputs.value }}
-          generate_release_notes: true
-          prerelease: ${{ contains(steps.version.outputs.value, '-') }}
-          fail_on_unmatched_files: true
-          files: |
-            artifacts/TiaAgent.Cli.${{ steps.version.outputs.value }}.nupkg
-            artifacts/TiaAgent-${{ steps.version.outputs.value }}.addin
+      - name: Delete temporary branch
+        run: git push origin --delete release/v0.3.0-beta.7-trigger
