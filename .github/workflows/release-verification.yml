@@ -40,6 +40,16 @@ jobs:
           nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${VERSION}/tiaagent.cli.${VERSION}.nupkg"
           nuget_page="https://www.nuget.org/packages/TiaAgent.Cli/${VERSION}"
 
+          recent_runs="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?per_page=20")"
+          run_snapshot="$(jq -r '
+            [.workflow_runs[] | select(.name == "Pipeline" or .name == "Release Verification")][0:12]
+            | map("- [\(.name) #\(.run_number)](\(.html_url)): event=\(.event), status=\(.status), conclusion=\(.conclusion // "pending"), created=\(.created_at)")
+            | join("\n")
+          ' <<< "$recent_runs")"
+          gh pr comment "$REPORT_PR" --body "## ${TAG} workflow snapshot
+
+${run_snapshot}"
+
           release_json=""
           verified=false
           for attempt in $(seq 1 80); do
