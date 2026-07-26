@@ -133,37 +133,29 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
             }
 
             var executionView = createResult.Value.view;
-            var wpfHost = createResult.Value.host;
 
-            try
-            {
-                var coordinator = new AssistantExecutionCoordinator();
-                await coordinator.ExecuteAsync(
-                    executionView,
-                    cancellationToken => ExecuteViaBridgeAsync(
-                        action,
-                        selectionInfo,
-                        typeName,
-                        correlationId,
-                        selectionSnapshot,
-                        cancellationToken),
-                    FormatUserErrorMessage,
-                    onExecutionStarting: () => AddInLogger.Info("Agent request started."),
-                    onExecutionCompleted: result =>
-                    {
-                        AddInLogger.Info($"Agent response received. Response length: {result.Markdown.Length} chars; " +
-                                         $"sha256={TextPayloadDiagnostics.ComputeUtf8Sha256(result.Markdown)}");
-                    },
-                    onExecutionFailed: ex =>
-                    {
-                        var diagnostics = FormatExceptionDiagnostics(ex, action, correlationId);
-                        AddInLogger.Error(diagnostics, null);
-                    }).ConfigureAwait(false);
-            }
-            finally
-            {
-                wpfHost?.Dispose();
-            }
+            var coordinator = new AssistantExecutionCoordinator();
+            await coordinator.ExecuteAsync(
+                executionView,
+                cancellationToken => ExecuteViaBridgeAsync(
+                    action,
+                    selectionInfo,
+                    typeName,
+                    correlationId,
+                    selectionSnapshot,
+                    cancellationToken),
+                FormatUserErrorMessage,
+                onExecutionStarting: () => AddInLogger.Info("Agent request started."),
+                onExecutionCompleted: result =>
+                {
+                    AddInLogger.Info($"Agent response received. Response length: {result.Markdown.Length} chars; " +
+                                     $"sha256={TextPayloadDiagnostics.ComputeUtf8Sha256(result.Markdown)}");
+                },
+                onExecutionFailed: ex =>
+                {
+                    var diagnostics = FormatExceptionDiagnostics(ex, action, correlationId);
+                    AddInLogger.Error(diagnostics, null);
+                }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

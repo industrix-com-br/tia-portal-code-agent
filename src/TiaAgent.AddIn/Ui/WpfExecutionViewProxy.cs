@@ -12,7 +12,7 @@ namespace TiaAgent.AddIn.Ui;
 /// The caller (TIA Portal callback thread) interacts with this proxy;
 /// all UI work happens on the WPF host thread.
 /// </summary>
-internal sealed class WpfExecutionViewProxy : IAssistantExecutionView, IAssistantExecutionLifetime
+internal sealed class WpfExecutionViewProxy : IAssistantExecutionView
 {
     private readonly WpfThreadHost _host;
     private readonly AssistantExecutionWindow _window;
@@ -105,8 +105,4 @@ internal sealed class WpfExecutionViewProxy : IAssistantExecutionView, IAssistan
         return tcs.Task;
     }
 
-    public void CompleteExecution()
-    {
-        _host.RequestShutdown();
-    }
 }

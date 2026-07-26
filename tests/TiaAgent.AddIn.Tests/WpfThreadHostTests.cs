@@ -227,18 +227,35 @@ public class WpfThreadHostTests
     }
 
     [Fact]
-    public void WpfExecutionViewProxy_CompleteExecution_ShutsDownHost()
+    public async Task CompletingAgentRequest_DoesNotStopWpfDispatcher()
     {
         using var host = new WpfThreadHost();
         host.Start(TimeSpan.FromSeconds(5)).Should().BeTrue();
 
         var window = host.CreateAndShowWindow(ct =>
-            new AssistantExecutionWindow("explain", "complete-test", "test-object"));
+            new AssistantExecutionWindow("explain", "lifecycle-test", "test-object"));
 
         var proxy = new WpfExecutionViewProxy(host, window);
 
-        proxy.CompleteExecution();
+        // Simulate the full agent lifecycle: show result, complete execution
+        var result = new AssistantExecutionResult("# Analysis Result", "claude");
+        await proxy.ShowResultAsync(result);
 
+        // The window should still be open and the dispatcher should be alive
+        proxy.IsClosed.Should().BeFalse();
+        host.Dispatcher.Thread.IsAlive.Should().BeTrue();
+
+        // Dispatcher should remain responsive after showing result
+        var responsivenessCheck = new TaskCompletionSource<bool>();
+#pragma warning disable CS4014 // BeginInvoke is fire-and-forget by design
+        host.Dispatcher.BeginInvoke(new Action(() => responsivenessCheck.TrySetResult(true)),
+            DispatcherPriority.Normal);
+#pragma warning restore CS4014
+        var responsive = await Task.WhenAny(responsivenessCheck.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        responsive.Should().Be(responsivenessCheck.Task);
+
+        // Only shut down when the user closes the window (simulated)
+        host.RequestShutdown(reason: "test-simulation", caller: "test");
         var stopped = host.WaitForShutdown(TimeSpan.FromSeconds(3));
         stopped.Should().BeTrue();
     }
@@ -258,6 +275,24 @@ public class WpfThreadHostTests
 
         host.RequestShutdown();
         host.WaitForShutdown(TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
+    public void WindowClosed_TriggersDispatcherShutdown()
+    {
+        using var host = new WpfThreadHost();
+        host.Start(TimeSpan.FromSeconds(5)).Should().BeTrue();
+
+        var window = host.CreateAndShowWindow(ct =>
+            new AssistantExecutionWindow("explain", "closed-test", "test-object"));
+
+        host.Dispatcher.Thread.IsAlive.Should().BeTrue();
+
+        // Simulate user closing the window — this should trigger dispatcher shutdown
+        host.Dispatcher.Invoke(() => window.CloseWindow());
+
+        var stopped = host.WaitForShutdown(TimeSpan.FromSeconds(3));
+        stopped.Should().BeTrue();
     }
 
     [Fact]

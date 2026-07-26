@@ -32,11 +32,6 @@ internal interface IAssistantExecutionView
     Task ShowErrorAsync(string message);
 }
 
-internal interface IAssistantExecutionLifetime
-{
-    void CompleteExecution();
-}
-
 internal sealed class AssistantExecutionCoordinator
 {
     internal const string DefaultLoadingMessage = "Waiting for the Agent Code response...";
@@ -56,42 +51,35 @@ internal sealed class AssistantExecutionCoordinator
         if (formatError == null)
             throw new ArgumentNullException(nameof(formatError));
 
+        view.ShowLoading(DefaultLoadingMessage);
+        await view.ShowAsync().ConfigureAwait(false);
+
+        if (view.IsClosed)
+            return;
+
         try
         {
-            view.ShowLoading(DefaultLoadingMessage);
-            await view.ShowAsync().ConfigureAwait(false);
+            onExecutionStarting?.Invoke();
+            var result = await executeAsync(view.CancellationToken).ConfigureAwait(false);
+            onExecutionCompleted?.Invoke(result);
 
-            if (view.IsClosed)
+            if (!view.IsClosed)
+                await view.ShowResultAsync(result).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            if (view.IsClosed || view.CancellationToken.IsCancellationRequested)
                 return;
 
-            try
-            {
-                onExecutionStarting?.Invoke();
-                var result = await executeAsync(view.CancellationToken).ConfigureAwait(false);
-                onExecutionCompleted?.Invoke(result);
-
-                if (!view.IsClosed)
-                    await view.ShowResultAsync(result).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException ex)
-            {
-                if (view.IsClosed || view.CancellationToken.IsCancellationRequested)
-                    return;
-
-                onExecutionFailed?.Invoke(ex);
-                if (!view.IsClosed)
-                    await view.ShowErrorAsync("The operation was cancelled.").ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                onExecutionFailed?.Invoke(ex);
-                if (!view.IsClosed)
-                    await view.ShowErrorAsync(formatError(ex)).ConfigureAwait(false);
-            }
+            onExecutionFailed?.Invoke(ex);
+            if (!view.IsClosed)
+                await view.ShowErrorAsync("The operation was cancelled.").ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex)
         {
-            (view as IAssistantExecutionLifetime)?.CompleteExecution();
+            onExecutionFailed?.Invoke(ex);
+            if (!view.IsClosed)
+                await view.ShowErrorAsync(formatError(ex)).ConfigureAwait(false);
         }
     }
 }
