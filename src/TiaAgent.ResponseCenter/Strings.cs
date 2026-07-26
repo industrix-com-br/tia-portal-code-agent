@@ -51,10 +51,11 @@ public static class Strings
     public const string ErrorCopyFailed = "Failed to copy to clipboard.";
     public const string ErrorTitle = "The request could not be completed.";
     public const string ErrorMessage = "Agent Code did not return a valid response.";
+    public const string EmptyResponseMessage = "Agent Code completed without returning response content.";
 
     // Loading
     public const string LoadingText = "Analyzing code…";
-    public const string WaitingText = "Waiting for Agent Code";
+    public const string WaitingText = "Waiting for Agent Code response…";
 
     // Input
     public const string InputPlaceholder = "Ask something about the selected code…";
