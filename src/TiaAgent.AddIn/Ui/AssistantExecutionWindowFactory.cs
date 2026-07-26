@@ -1,4 +1,3 @@
-#if SIEMENS
 using System;
 using System.Threading;
 using System.Windows;
@@ -56,4 +55,3 @@ internal static class AssistantExecutionWindowFactory
         }
     }
 }
-#endif
