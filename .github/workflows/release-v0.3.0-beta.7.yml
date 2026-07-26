@@ -1,9 +1,13 @@
 name: Release v0.3.0-beta.7
 
 on:
-  push:
+  pull_request:
     branches:
-      - release/v0.3.0-beta.7-trigger
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
@@ -12,6 +16,7 @@ permissions:
 jobs:
   publish:
     name: Publish v0.3.0-beta.7
+    if: github.head_ref == 'release/v0.3.0-beta.7-trigger'
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
     timeout-minutes: 30
 
@@ -21,6 +26,15 @@ jobs:
         with:
           ref: 9772a88f397588e757881aa73d89f8638fcff2f9
           fetch-depth: 0
+
+      - name: Ensure tag does not exist
+        shell: pwsh
+        run: |
+          $tag = "v0.3.0-beta.7"
+          $existing = git ls-remote --tags origin "refs/tags/$tag"
+          if ($existing) {
+            throw "Tag '$tag' already exists."
+          }
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -41,11 +55,6 @@ jobs:
         shell: pwsh
         run: |
           $tag = "v0.3.0-beta.7"
-          $existing = git ls-remote --tags origin "refs/tags/$tag"
-          if ($existing) {
-            throw "Tag '$tag' already exists."
-          }
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a $tag -m "Release $tag" HEAD
@@ -78,8 +87,3 @@ jobs:
           files: |
             artifacts/TiaAgent.Cli.0.3.0-beta.7.nupkg
             artifacts/TiaAgent-0.3.0-beta.7.addin
-
-      - name: Remove one-time release branch
-        if: success()
-        shell: pwsh
-        run: git push origin --delete release/v0.3.0-beta.7-trigger
