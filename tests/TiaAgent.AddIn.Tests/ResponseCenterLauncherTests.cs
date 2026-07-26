@@ -59,7 +59,7 @@ public sealed class ResponseCenterLauncherTests : IDisposable
         arguments.Should().Contain("--task-id \"task-1\"");
         arguments.Should().Contain("--object-name \"Main block \\\"A\\\"\"");
         arguments.Should().Contain("--bridge-url \"http://127.0.0.1:43119\"");
-        arguments.Should().NotContain("token", StringComparison.OrdinalIgnoreCase);
+        arguments.ToLowerInvariant().Should().NotContain("token");
     }
 
     public void Dispose()
