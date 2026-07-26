@@ -1,4 +1,3 @@
-#if SIEMENS
 using System;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -373,17 +372,36 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
 
     private static FlowDocument RenderMarkdown(string markdown)
     {
-        if (string.IsNullOrWhiteSpace(markdown))
-            return PlainTextFlowDocumentHelper.CreateEmpty();
-
-        var renderer = new SimpleMarkdownFlowDocumentRenderer();
-        return renderer.Render(markdown) ?? PlainTextFlowDocumentHelper.Create(markdown);
+#if SIEMENS
+        if (!string.IsNullOrWhiteSpace(markdown))
+        {
+            var renderer = new SimpleMarkdownFlowDocumentRenderer();
+            var rendered = renderer.Render(markdown);
+            if (rendered != null)
+                return rendered;
+        }
+#endif
+        return CreatePlainTextDocument(markdown, Brushes.Black);
     }
 
     private static FlowDocument CreateErrorDocument(string message)
     {
-        var document = PlainTextFlowDocumentHelper.Create(message);
-        document.Foreground = Brushes.DarkRed;
+        return CreatePlainTextDocument(message, Brushes.DarkRed);
+    }
+
+    private static FlowDocument CreatePlainTextDocument(string content, Brush foreground)
+    {
+        var document = new FlowDocument
+        {
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            Foreground = foreground,
+            PagePadding = new Thickness(16)
+        };
+        document.Blocks.Add(new Paragraph(new Run(content ?? string.Empty))
+        {
+            Margin = new Thickness(0)
+        });
         return document;
     }
 
@@ -441,4 +459,3 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
         };
     }
 }
-#endif
