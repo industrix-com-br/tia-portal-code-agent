@@ -9,8 +9,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - .release/v0.3.1-verify
 
 permissions:
   actions: read
@@ -20,6 +18,7 @@ permissions:
 
 jobs:
   verify:
+    if: github.event_name == 'push' || github.event.pull_request.number == 178
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
