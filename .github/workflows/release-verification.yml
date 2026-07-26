@@ -1,18 +1,20 @@
 name: Release Verification
 
 on:
-  create:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release-verification.yml
 
 permissions:
   actions: read
   contents: write
   issues: write
   pull-requests: write
-  statuses: write
 
 jobs:
   verify:
-    if: github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-verify/v')
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -22,48 +24,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify published release
+      - name: Verify v0.3.1 publication
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TRIGGER_BRANCH: ${{ github.event.ref }}
+          TAG: v0.3.1
+          VERSION: 0.3.1
           TARGET_SHA: 216f7e9f226efdbb0f64c86aecdb623af3d1b84b
           REPORT_PR: 173
         run: |
           set -euo pipefail
 
-          tag="${TRIGGER_BRANCH#release-verify/}"
-          version="${tag#v}"
-          package_name="TiaAgent.Cli.${version}.nupkg"
-          addin_name="TiaAgent-${version}.addin"
-          nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${version}/tiaagent.cli.${version}.nupkg"
-          nuget_page="https://www.nuget.org/packages/TiaAgent.Cli/${version}"
-
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
-
-          post_status() {
-            local state="$1"
-            local context="$2"
-            local description="$3"
-            local target_url="$4"
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${TARGET_SHA}" \
-              -f state="$state" \
-              -f context="$context" \
-              -f description="$description" \
-              -f target_url="$target_url" >/dev/null
-          }
-
-          post_status pending "release/${version}/github" "Waiting for GitHub Release and assets." "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
-          post_status pending "release/${version}/nuget" "Waiting for NuGet publication." "$nuget_page"
+          package_name="TiaAgent.Cli.${VERSION}.nupkg"
+          addin_name="TiaAgent-${VERSION}.addin"
+          nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${VERSION}/tiaagent.cli.${VERSION}.nupkg"
+          nuget_page="https://www.nuget.org/packages/TiaAgent.Cli/${VERSION}"
 
           release_json=""
           verified=false
           for attempt in $(seq 1 80); do
-            if release_json="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>/dev/null)"; then
-              release_ok="$(jq -r --arg tag "$tag" --arg package "$package_name" --arg addin "$addin_name" '
+            if release_json="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null)"; then
+              release_ok="$(jq -r --arg tag "$TAG" --arg package "$package_name" --arg addin "$addin_name" '
                 (.tag_name == $tag)
                 and (.draft == false)
                 and (.prerelease == false)
@@ -71,7 +52,7 @@ jobs:
                 and ([.assets[].name] | index($addin) != null)
               ' <<< "$release_json")"
 
-              if [[ "$release_ok" == "true" ]] && curl --fail --silent --show-error --location --head "$nuget_url" >/dev/null; then
+              if [[ "$release_ok" == "true" ]] && curl --fail --silent --show-error --location --range 0-0 "$nuget_url" -o /dev/null; then
                 verified=true
                 break
               fi
@@ -82,44 +63,41 @@ jobs:
           done
 
           if [[ "$verified" != "true" ]]; then
-            post_status failure "release/${version}/github" "GitHub Release verification timed out." "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
-            post_status failure "release/${version}/nuget" "NuGet publication verification timed out." "$nuget_page"
-            gh pr comment "$REPORT_PR" --body "Release verification for ${tag} timed out before GitHub Release assets and NuGet publication were both available."
+            gh pr comment "$REPORT_PR" --body "Release verification for ${TAG} timed out before the GitHub Release assets and NuGet package were both available."
             exit 1
           fi
 
           release_url="$(jq -r '.html_url' <<< "$release_json")"
+          published_at="$(jq -r '.published_at' <<< "$release_json")"
 
           runs_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=50")"
-          pipeline_record="$(jq -r '
-            [.workflow_runs[] | select(.name == "Pipeline" and .status == "completed" and .conclusion == "success")]
+          pipeline_record="$(jq -r --arg published "$published_at" '
+            [.workflow_runs[]
+              | select(.name == "Pipeline")
+              | select(.status == "completed" and .conclusion == "success")
+              | select(.created_at <= $published and .updated_at >= $published)]
             | sort_by(.created_at)
             | last
             | if . then [.id, .html_url] | @tsv else empty end
           ' <<< "$runs_json")"
 
           if [[ -z "$pipeline_record" ]]; then
-            post_status failure "release/${version}/pipeline" "No successful release pipeline run found." "https://github.com/${GITHUB_REPOSITORY}/actions"
-            gh pr comment "$REPORT_PR" --body "Release verification found ${tag}, its assets, and NuGet publication, but no successful official Pipeline workflow_dispatch run."
+            gh pr comment "$REPORT_PR" --body "Release verification found ${TAG}, its expected assets, and NuGet publication, but could not correlate a successful official Pipeline run."
             exit 1
           fi
 
           IFS=$'\t' read -r pipeline_id pipeline_url <<< "$pipeline_record"
-
-          post_status success "release/${version}/pipeline" "Official release pipeline completed successfully." "$pipeline_url"
-          post_status success "release/${version}/github" "GitHub Release has both expected artifacts." "$release_url"
-          post_status success "release/${version}/nuget" "TiaAgent.Cli ${version} is available on NuGet." "$nuget_page"
-
           report="$(cat <<EOF
-          ## ${tag} release verification
+          ## ${TAG} release verification
 
           - Pipeline: [run ${pipeline_id}](${pipeline_url}) — success
-          - GitHub Release: [${tag}](${release_url}) — published, stable
-          - NuGet: [TiaAgent.Cli ${version}](${nuget_page}) — available
+          - GitHub Release: [${TAG}](${release_url}) — published, stable
+          - NuGet: [TiaAgent.Cli ${VERSION}](${nuget_page}) — available
           - Assets: \`${package_name}\`, \`${addin_name}\`
           - Tagged commit: \`${TARGET_SHA}\`
           EOF
           )"
+
           gh pr comment "$REPORT_PR" --body "$report"
 
           echo "Pipeline run: $pipeline_id $pipeline_url"
@@ -127,9 +105,9 @@ jobs:
           echo "NuGet package: $nuget_page"
           echo "Assets: $package_name, $addin_name"
 
-      - name: Delete verification trigger branch
+      - name: Remove temporary trigger branches
         if: always()
         shell: bash
-        env:
-          TRIGGER_BRANCH: ${{ github.event.ref }}
-        run: git push origin --delete "$TRIGGER_BRANCH" || true
+        run: |
+          git push origin --delete release-bootstrap/v0.3.1 || true
+          git push origin --delete release-verify/v0.3.1 || true
