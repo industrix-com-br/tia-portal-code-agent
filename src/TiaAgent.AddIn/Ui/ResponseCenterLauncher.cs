@@ -193,7 +193,7 @@ internal static class ResponseCenterLauncher
 
         arguments.Append(name);
         arguments.Append(' ');
-        arguments.Append(QuoteArgument(value));
+        arguments.Append(QuoteArgument(value!));
     }
 
     /// <summary>
