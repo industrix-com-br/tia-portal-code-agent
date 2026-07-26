@@ -7,18 +7,54 @@ using TiaAgent.AddIn.Diagnostics;
 
 namespace TiaAgent.AddIn.Ui;
 
-internal sealed record ResponseCenterLaunchRequest(
-    string TaskId,
-    string Action,
-    string ObjectName,
-    string ObjectType,
-    string? PlcName,
-    string? ProjectName,
-    string CorrelationId,
-    string? InitialStatus,
-    string BridgeUrl);
+internal sealed class ResponseCenterLaunchRequest
+{
+    public ResponseCenterLaunchRequest(
+        string taskId,
+        string action,
+        string objectName,
+        string objectType,
+        string? plcName,
+        string? projectName,
+        string correlationId,
+        string? initialStatus,
+        string bridgeUrl)
+    {
+        TaskId = taskId ?? throw new ArgumentNullException(nameof(taskId));
+        Action = action ?? throw new ArgumentNullException(nameof(action));
+        ObjectName = objectName ?? throw new ArgumentNullException(nameof(objectName));
+        ObjectType = objectType ?? throw new ArgumentNullException(nameof(objectType));
+        PlcName = plcName;
+        ProjectName = projectName;
+        CorrelationId = correlationId ?? throw new ArgumentNullException(nameof(correlationId));
+        InitialStatus = initialStatus;
+        BridgeUrl = bridgeUrl ?? throw new ArgumentNullException(nameof(bridgeUrl));
+    }
 
-internal sealed record ResponseCenterLaunchResult(bool Success, string? ExecutablePath, string? ErrorMessage);
+    public string TaskId { get; }
+    public string Action { get; }
+    public string ObjectName { get; }
+    public string ObjectType { get; }
+    public string? PlcName { get; }
+    public string? ProjectName { get; }
+    public string CorrelationId { get; }
+    public string? InitialStatus { get; }
+    public string BridgeUrl { get; }
+}
+
+internal sealed class ResponseCenterLaunchResult
+{
+    public ResponseCenterLaunchResult(bool success, string? executablePath, string? errorMessage)
+    {
+        Success = success;
+        ExecutablePath = executablePath;
+        ErrorMessage = errorMessage;
+    }
+
+    public bool Success { get; }
+    public string? ExecutablePath { get; }
+    public string? ErrorMessage { get; }
+}
 
 /// <summary>
 /// Locates and starts the out-of-process Response Center installed with the active product version.
