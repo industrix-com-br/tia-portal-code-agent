@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -39,7 +38,10 @@ internal static class ResponseCenterLauncher
         string? installationRoot = null,
         Func<ProcessStartInfo, Process?>? processStarter = null)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        if (request == null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
 
         try
         {
@@ -64,7 +66,10 @@ internal static class ResponseCenterLauncher
             var process = (processStarter ?? Process.Start)(startInfo);
             if (process == null)
             {
-                return new ResponseCenterLaunchResult(false, executablePath, "Windows did not start the Response Center process.");
+                return new ResponseCenterLaunchResult(
+                    false,
+                    executablePath,
+                    "Windows did not start the Response Center process.");
             }
 
             AddInLogger.Info(
