@@ -1,0 +1,107 @@
+name: Release Verification
+
+on:
+  create:
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  verify-release:
+    if: github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-status/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Verify workflow, release, and NuGet publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_BRANCH: ${{ github.event.ref }}
+          REPORT_PR: "166"
+        run: |
+          set -euo pipefail
+
+          tag="${TRIGGER_BRANCH#release-status/}"
+          version="${tag#v}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
+            echo "Invalid release tag derived from status branch: $tag" >&2
+            exit 1
+          fi
+
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id=$(gh run list \
+              --workflow pipeline.yml \
+              --event workflow_dispatch \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+            if [[ -n "$run_id" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ -z "$run_id" ]]; then
+            gh pr comment "$REPORT_PR" --body "Release verification failed: no workflow_dispatch run was found for $tag."
+            exit 1
+          fi
+
+          set +e
+          gh run watch "$run_id" --exit-status
+          run_exit=$?
+          set -e
+
+          run_url=$(gh run view "$run_id" --json url --jq '.url')
+          gh run view "$run_id" --log > release-run.log
+
+          if ! grep -Fq "$tag" release-run.log; then
+            gh pr comment "$REPORT_PR" --body "Release verification failed: latest workflow_dispatch run $run_url was not for $tag."
+            exit 1
+          fi
+
+          if [[ "$run_exit" -ne 0 ]]; then
+            gh pr comment "$REPORT_PR" --body "Release verification failed: Pipeline run $run_url completed unsuccessfully for $tag."
+            exit "$run_exit"
+          fi
+
+          release_url=$(gh release view "$tag" --json url --jq '.url')
+          assets=$(gh release view "$tag" --json assets --jq '[.assets[].name] | join(", ")')
+
+          expected_package="TiaAgent.Cli.$version.nupkg"
+          expected_addin="TiaAgent-$version.addin"
+          if [[ ",$assets," != *",$expected_package,"* || ",$assets," != *",$expected_addin,"* ]]; then
+            gh pr comment "$REPORT_PR" --body "Release verification failed: GitHub Release $release_url does not contain both expected assets. Found: $assets"
+            exit 1
+          fi
+
+          package_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/$version/tiaagent.cli.$version.nupkg"
+          package_status=""
+          for _ in $(seq 1 30); do
+            package_status=$(curl -sS -o /dev/null -w '%{http_code}' "$package_url")
+            if [[ "$package_status" == "200" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ "$package_status" != "200" ]]; then
+            gh pr comment "$REPORT_PR" --body "Release verification failed: Pipeline succeeded at $run_url and GitHub Release exists at $release_url, but NuGet returned HTTP $package_status for $tag."
+            exit 1
+          fi
+
+          cat > release-report.md <<EOF
+          Release verification succeeded for **$tag**.
+
+          - Pipeline: $run_url
+          - GitHub Release: $release_url
+          - Release assets: $assets
+          - NuGet package endpoint: HTTP 200
+          EOF
+
+          gh pr comment "$REPORT_PR" --body-file release-report.md
+          git push origin --delete "$TRIGGER_BRANCH"
