@@ -6,6 +6,8 @@ on:
 permissions:
   actions: read
   contents: write
+  issues: write
+  pull-requests: write
   statuses: write
 
 jobs:
@@ -26,6 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRIGGER_BRANCH: ${{ github.event.ref }}
           TARGET_SHA: 216f7e9f226efdbb0f64c86aecdb623af3d1b84b
+          REPORT_PR: 173
         run: |
           set -euo pipefail
 
@@ -81,6 +84,7 @@ jobs:
           if [[ "$verified" != "true" ]]; then
             post_status failure "release/${version}/github" "GitHub Release verification timed out." "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
             post_status failure "release/${version}/nuget" "NuGet publication verification timed out." "$nuget_page"
+            gh pr comment "$REPORT_PR" --body "Release verification for ${tag} timed out before GitHub Release assets and NuGet publication were both available."
             exit 1
           fi
 
@@ -96,6 +100,7 @@ jobs:
 
           if [[ -z "$pipeline_record" ]]; then
             post_status failure "release/${version}/pipeline" "No successful release pipeline run found." "https://github.com/${GITHUB_REPOSITORY}/actions"
+            gh pr comment "$REPORT_PR" --body "Release verification found ${tag}, its assets, and NuGet publication, but no successful official Pipeline workflow_dispatch run."
             exit 1
           fi
 
@@ -104,6 +109,18 @@ jobs:
           post_status success "release/${version}/pipeline" "Official release pipeline completed successfully." "$pipeline_url"
           post_status success "release/${version}/github" "GitHub Release has both expected artifacts." "$release_url"
           post_status success "release/${version}/nuget" "TiaAgent.Cli ${version} is available on NuGet." "$nuget_page"
+
+          report="$(cat <<EOF
+          ## ${tag} release verification
+
+          - Pipeline: [run ${pipeline_id}](${pipeline_url}) — success
+          - GitHub Release: [${tag}](${release_url}) — published, stable
+          - NuGet: [TiaAgent.Cli ${version}](${nuget_page}) — available
+          - Assets: \`${package_name}\`, \`${addin_name}\`
+          - Tagged commit: \`${TARGET_SHA}\`
+          EOF
+          )"
+          gh pr comment "$REPORT_PR" --body "$report"
 
           echo "Pipeline run: $pipeline_id $pipeline_url"
           echo "GitHub Release: $release_url"
