@@ -206,11 +206,41 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
             if (Interlocked.Exchange(ref _isClosed, 1) != 0)
                 return;
 
+            AddInLogger.Info($"WPF window closed. (thread={Environment.CurrentManagedThreadId})");
+
             if (!_closeCancellation.IsCancellationRequested)
                 _closeCancellation.Cancel();
 
             TryDisposeCancellationSource();
         };
+
+        _window.ContentRendered += (_, __) =>
+        {
+            AddInLogger.Info($"WPF window content rendered. (thread={Environment.CurrentManagedThreadId})");
+        };
+    }
+
+    /// <summary>
+    /// Registers a callback that fires when the WPF Window's Loaded event triggers.
+    /// Used by WpfThreadHost to signal that the window is ready.
+    /// </summary>
+    internal void HookLoaded(Action callback)
+    {
+        RoutedEventHandler? handler = null;
+        handler = (_, __) =>
+        {
+            _window.Loaded -= handler!;
+            callback();
+        };
+        _window.Loaded += handler;
+    }
+
+    /// <summary>
+    /// Shows the underlying WPF Window. Must be called on the WPF thread.
+    /// </summary>
+    internal void ShowWindow()
+    {
+        _window.Show();
     }
 
     public bool IsClosed => Volatile.Read(ref _isClosed) != 0;
@@ -306,27 +336,45 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
             return Task.CompletedTask;
 
         var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        EventHandler? renderedHandler = null;
-        EventHandler? closedHandler = null;
 
-        void Complete(bool rendered)
+        // Use Loaded instead of ContentRendered for faster confirmation.
+        // ContentRendered requires a fully rendered frame which may never fire
+        // on a TIA Portal callback thread without an active message pump.
+        RoutedEventHandler? loadedHandler = null;
+        EventHandler? closedHandler = null;
+        CancellationTokenSource? timeoutCts = null;
+
+        void Cleanup()
         {
-            if (renderedHandler != null)
-                _window.ContentRendered -= renderedHandler;
+            if (loadedHandler != null)
+                _window.Loaded -= loadedHandler;
             if (closedHandler != null)
                 _window.Closed -= closedHandler;
+            timeoutCts?.Dispose();
+        }
 
-            if (rendered)
-                AddInLogger.Info("WPF window shown.");
+        void Complete(bool loaded)
+        {
+            Cleanup();
+
+            if (loaded)
+                AddInLogger.Info($"WPF window loaded. (thread={Environment.CurrentManagedThreadId}, contentRendered=false)");
+            else
+                AddInLogger.Info($"WPF window shown (closed before load). (thread={Environment.CurrentManagedThreadId})");
 
             completion.TrySetResult(null);
         }
 
-        renderedHandler = (_, __) => Complete(rendered: true);
-        closedHandler = (_, __) => Complete(rendered: false);
-        _window.ContentRendered += renderedHandler;
+        loadedHandler = (_, __) => Complete(loaded: true);
+        closedHandler = (_, __) => Complete(loaded: false);
+        _window.Loaded += loadedHandler;
         _window.Closed += closedHandler;
         _window.Show();
+
+        // Defensive timeout: if neither Loaded nor Closed fires within 5s,
+        // complete anyway to prevent infinite blocking.
+        timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        timeoutCts.Token.Register(() => Complete(loaded: false));
 
         return completion.Task;
     }
