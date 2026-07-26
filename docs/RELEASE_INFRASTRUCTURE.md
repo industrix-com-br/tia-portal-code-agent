@@ -80,12 +80,19 @@ The release workflow is `.github/workflows/pipeline.yml`.
 
 ### Triggers
 
-The workflow supports three triggers:
+The workflow supports four triggers:
 
-1. **Push to main / tags** - runs CI only
-2. **Pull requests** - runs CI only
-3. **workflow_dispatch** - runs release publication with version input
-4. **Issues labeled** - runs release when issue labeled `release:run`
+| Trigger | Event | Jobs Run | Version Input |
+|---------|-------|----------|---------------|
+| Push to main | `push` to `main` branch | CI | None (CI only) |
+| Push tag | `push` tag matching `v*` | CI | None (CI only) |
+| Pull request | `pull_request` to `main` | CI | None (CI only) |
+| Manual dispatch | `workflow_dispatch` | CI + Release | `inputs.version` |
+| Issue labeled | `issues` with `release:run` label | CI + Release | Issue title |
+
+**CI-only triggers:** Push to main, push tags, and pull requests run only the CI job (build, test).
+
+**Release triggers:** Manual dispatch and issue-based triggers run the full release pipeline (resolve-release, publish, verify-release).
 
 ### Release jobs
 
@@ -135,6 +142,17 @@ gh issue create \
   --label "release:run"
 ```
 
+**Issue title format (strict):**
+
+```text
+Release vX.Y.Z
+Release vX.Y.Z-alpha.N
+Release vX.Y.Z-beta.N
+Release vX.Y.Z-rc.N
+```
+
+**Actor validation:** The workflow checks that the actor has write, maintain, or admin permission on the repository.
+
 The workflow:
 
 1. Validates the issue title format: `Release vX.Y.Z` or `Release vX.Y.Z-prerelease.N`
@@ -143,6 +161,16 @@ The workflow:
 4. Publishes the release
 5. Comments the final release report
 6. Closes the issue on success
+7. Leaves issue open with error message if publication fails
+
+### Trigger contract
+
+| Input | Source | Validation |
+|-------|--------|------------|
+| Version | `inputs.version` or issue title | Must match `X.Y.Z`, `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, or `X.Y.Z-rc.N` |
+| Actor | `github.actor` | Must have write/maintain/admin permission for issue triggers |
+| Tag | Created by workflow | Must not exist or point to same commit as HEAD |
+| NuGet | Checked before publish | Version must not already exist |
 
 ## Permissions model
 

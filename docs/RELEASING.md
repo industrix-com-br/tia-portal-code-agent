@@ -27,6 +27,13 @@ See [`VERSIONING.md`](VERSIONING.md) for the complete versioning rules.
 
 The permanent release workflow is `.github/workflows/pipeline.yml`.
 
+### Trigger options
+
+| Trigger | Command | Version Source | Actor Required |
+|---------|---------|----------------|----------------|
+| Manual dispatch | `gh workflow run pipeline.yml --ref main -f version=X.Y.Z` | `inputs.version` parameter | Maintainer |
+| Issue label | Create issue + apply `release:run` label | Issue title: `Release vX.Y.Z` | write/maintain/admin |
+
 ### Option 1: Manual dispatch (recommended)
 
 ```bash
@@ -41,14 +48,26 @@ gh workflow run pipeline.yml \
 2. Apply the label `release:run`
 3. The workflow will execute automatically
 
+**Issue title format (strict):**
+
+```text
+Release v0.3.2
+Release v0.3.2-beta.1
+Release v0.3.2-rc.1
+```
+
+**Actor validation:** Only users with write, maintain, or admin permission can trigger releases via issues.
+
 The workflow:
 
 - extracts the version from the issue title;
 - validates the version format;
+- validates actor permissions;
 - comments the workflow run URL on the issue;
 - publishes the release;
 - comments the final release report;
-- closes the issue on success.
+- closes the issue on success;
+- leaves issue open with error if publication fails.
 
 ### Monitoring a release
 

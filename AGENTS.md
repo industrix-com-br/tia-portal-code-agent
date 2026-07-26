@@ -91,6 +91,13 @@ Release creation requires explicit maintainer authorization.
 
 The permanent release workflow is `.github/workflows/pipeline.yml`. All releases must go through this workflow.
 
+### Trigger options
+
+| Trigger | Command | Version Source | Actor Required |
+|---------|---------|----------------|----------------|
+| Manual dispatch | `gh workflow run pipeline.yml --ref main -f version=X.Y.Z` | `inputs.version` parameter | Maintainer |
+| Issue label | Create issue + apply `release:run` label | Issue title: `Release vX.Y.Z` | write/maintain/admin |
+
 ### Trigger a release
 
 ```bash
@@ -103,6 +110,14 @@ gh workflow run pipeline.yml \
 gh issue create \
   --title "Release v0.3.2" \
   --label "release:run"
+```
+
+**Issue title format (strict):**
+
+```text
+Release v0.3.2
+Release v0.3.2-beta.1
+Release v0.3.2-rc.1
 ```
 
 ### Monitor a release
