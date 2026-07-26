@@ -44,22 +44,27 @@ public partial class AgentResponseWindow : Window
             return;
         }
 
-        // The Bridge reports completion immediately before publishing the response.
-        // Listen to both properties so rendering is correct regardless of event order.
-        if (_viewModel.ShowResponse && !string.IsNullOrEmpty(_viewModel.ResponseContent))
+        // The Bridge can report completion immediately before publishing the response.
+        // Listen to both properties so rendering is correct regardless of event order,
+        // including a completed task that returned no content.
+        if (_viewModel.ShowResponse)
             RenderResponse(_viewModel.ResponseContent);
     }
 
     private void RenderResponse(string markdown)
     {
+        var displayContent = string.IsNullOrWhiteSpace(markdown)
+            ? Strings.EmptyResponseMessage
+            : markdown;
+
         try
         {
-            ResponseViewer.Document = MarkdownRenderer.Render(markdown)
-                ?? MarkdownRenderer.CreatePlainTextFallback(markdown);
+            ResponseViewer.Document = MarkdownRenderer.Render(displayContent, ResponseViewer)
+                ?? MarkdownRenderer.CreatePlainTextFallback(displayContent, ResponseViewer);
         }
         catch
         {
-            ResponseViewer.Document = MarkdownRenderer.CreatePlainTextFallback(markdown);
+            ResponseViewer.Document = MarkdownRenderer.CreatePlainTextFallback(displayContent, ResponseViewer);
         }
     }
 
