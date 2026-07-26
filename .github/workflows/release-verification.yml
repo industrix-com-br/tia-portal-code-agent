@@ -1,0 +1,118 @@
+name: Release Verification
+
+on:
+  create:
+
+permissions:
+  actions: read
+  contents: write
+  statuses: write
+
+jobs:
+  verify:
+    if: github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-verify/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_BRANCH: ${{ github.event.ref }}
+          TARGET_SHA: 216f7e9f226efdbb0f64c86aecdb623af3d1b84b
+        run: |
+          set -euo pipefail
+
+          tag="${TRIGGER_BRANCH#release-verify/}"
+          version="${tag#v}"
+          package_name="TiaAgent.Cli.${version}.nupkg"
+          addin_name="TiaAgent-${version}.addin"
+          nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${version}/tiaagent.cli.${version}.nupkg"
+          nuget_page="https://www.nuget.org/packages/TiaAgent.Cli/${version}"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          post_status() {
+            local state="$1"
+            local context="$2"
+            local description="$3"
+            local target_url="$4"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${TARGET_SHA}" \
+              -f state="$state" \
+              -f context="$context" \
+              -f description="$description" \
+              -f target_url="$target_url" >/dev/null
+          }
+
+          post_status pending "release/${version}/github" "Waiting for GitHub Release and assets." "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
+          post_status pending "release/${version}/nuget" "Waiting for NuGet publication." "$nuget_page"
+
+          release_json=""
+          verified=false
+          for attempt in $(seq 1 80); do
+            if release_json="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>/dev/null)"; then
+              release_ok="$(jq -r --arg tag "$tag" --arg package "$package_name" --arg addin "$addin_name" '
+                (.tag_name == $tag)
+                and (.draft == false)
+                and (.prerelease == false)
+                and ([.assets[].name] | index($package) != null)
+                and ([.assets[].name] | index($addin) != null)
+              ' <<< "$release_json")"
+
+              if [[ "$release_ok" == "true" ]] && curl --fail --silent --show-error --location --head "$nuget_url" >/dev/null; then
+                verified=true
+                break
+              fi
+            fi
+
+            echo "Release not fully available yet (attempt $attempt/80)."
+            sleep 15
+          done
+
+          if [[ "$verified" != "true" ]]; then
+            post_status failure "release/${version}/github" "GitHub Release verification timed out." "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
+            post_status failure "release/${version}/nuget" "NuGet publication verification timed out." "$nuget_page"
+            exit 1
+          fi
+
+          release_url="$(jq -r '.html_url' <<< "$release_json")"
+
+          runs_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=50")"
+          pipeline_record="$(jq -r '
+            [.workflow_runs[] | select(.name == "Pipeline" and .status == "completed" and .conclusion == "success")]
+            | sort_by(.created_at)
+            | last
+            | if . then [.id, .html_url] | @tsv else empty end
+          ' <<< "$runs_json")"
+
+          if [[ -z "$pipeline_record" ]]; then
+            post_status failure "release/${version}/pipeline" "No successful release pipeline run found." "https://github.com/${GITHUB_REPOSITORY}/actions"
+            exit 1
+          fi
+
+          IFS=$'\t' read -r pipeline_id pipeline_url <<< "$pipeline_record"
+
+          post_status success "release/${version}/pipeline" "Official release pipeline completed successfully." "$pipeline_url"
+          post_status success "release/${version}/github" "GitHub Release has both expected artifacts." "$release_url"
+          post_status success "release/${version}/nuget" "TiaAgent.Cli ${version} is available on NuGet." "$nuget_page"
+
+          echo "Pipeline run: $pipeline_id $pipeline_url"
+          echo "GitHub Release: $release_url"
+          echo "NuGet package: $nuget_page"
+          echo "Assets: $package_name, $addin_name"
+
+      - name: Delete verification trigger branch
+        if: always()
+        shell: bash
+        env:
+          TRIGGER_BRANCH: ${{ github.event.ref }}
+        run: git push origin --delete "$TRIGGER_BRANCH" || true
