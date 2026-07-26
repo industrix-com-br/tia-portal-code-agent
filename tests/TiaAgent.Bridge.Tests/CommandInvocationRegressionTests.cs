@@ -145,10 +145,10 @@ public class CommandInvocationRegressionTests
                 timeout: TimeSpan.FromSeconds(5),
                 cancellationToken: CancellationToken.None);
 
-            File.Exists(markerPath).Should().BeTrue("the child must close its output handles before the timeout");
+            File.Exists(markerPath).Should().BeTrue("the child must attempt to close its output handles before the timeout");
             result.TimedOut.Should().BeTrue();
             result.Cancelled.Should().BeFalse();
-            result.Error.Should().Contain("waiting for exit");
+            result.Error.Should().Contain("timed out");
         }
         finally
         {
