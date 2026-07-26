@@ -1,0 +1,41 @@
+name: Cleanup v0.3.0 Release Branches
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'agent/cleanup-v0.3.0-status-branches'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Remove temporary release branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+
+          delete_branch() {
+            local branch="$1"
+            local endpoint="repos/$repo/git/refs/heads/$branch"
+
+            if gh api "$endpoint" >/dev/null 2>&1; then
+              gh api --method DELETE "$endpoint"
+              echo "Deleted branch: $branch"
+            else
+              echo "Branch already absent: $branch"
+            fi
+          }
+
+          delete_branch "release-status/v0.3.0"
+          delete_branch "release-status-r2/v0.3.0"
+          delete_branch "agent/cleanup-v0.3.0-status-branches"
