@@ -93,28 +93,68 @@ public sealed class ProcessRunner : IDisposable
 
             process = new Process { StartInfo = startInfo };
             process.Start();
-
-            if (stdinContent != null)
-            {
-                var stdinBytes = Encoding.UTF8.GetBytes(stdinContent);
-                _logger.Info($"ProcessRunner: writing {stdinBytes.Length} UTF-8 bytes to stdin");
-
-                await process.StandardInput.BaseStream.WriteAsync(stdinBytes.AsMemory(), cancellationToken)
-                    .ConfigureAwait(false);
-                await process.StandardInput.BaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            try { process.StandardInput.Close(); } catch { }
-
             _logger.Info($"ProcessRunner: process started (PID={process.Id})");
 
             using var timeoutCts = new CancellationTokenSource(timeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, timeoutCts.Token);
 
-            // BOUNDARY 1: read stdout and stderr concurrently as raw bytes.
+            // Start draining both output streams immediately. A child process may
+            // write diagnostics and exit while stdin is still being written.
             var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, linkedCts.Token);
             var stderrTask = ReadAllBytesAsync(process.StandardError.BaseStream, linkedCts.Token);
+
+            string? stdinWriteError = null;
+            try
+            {
+                if (stdinContent != null)
+                {
+                    var stdinBytes = Encoding.UTF8.GetBytes(stdinContent);
+                    _logger.Info($"ProcessRunner: writing {stdinBytes.Length} UTF-8 bytes to stdin");
+
+                    await process.StandardInput.BaseStream.WriteAsync(stdinBytes.AsMemory(), linkedCts.Token)
+                        .ConfigureAwait(false);
+                    await process.StandardInput.BaseStream.FlushAsync(linkedCts.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.Warn($"ProcessRunner: stdin write timed out after {timeout.TotalSeconds}s");
+                KillProcessTree(process);
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
+                    TimedOut = true,
+                    Error = $"Process timed out after {timeout.TotalSeconds} seconds while writing stdin"
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.Info("ProcessRunner: process cancelled during stdin write");
+                KillProcessTree(process);
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdOut = string.Empty,
+                    StdErr = string.Empty,
+                    Cancelled = true,
+                    Error = "Process was cancelled"
+                };
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+            {
+                // The child may have exited because of invalid arguments or another
+                // startup error. Preserve its stdout/stderr instead of treating this
+                // as a process-start failure and discarding the real diagnostics.
+                stdinWriteError = $"Process stdin closed before all input was written: {ex.Message}";
+                _logger.Warn($"ProcessRunner: stdin write failed after process start: {ex.Message}");
+            }
+            finally
+            {
+                try { process.StandardInput.Close(); } catch { }
+            }
 
             byte[] stdoutBytes;
             byte[] stderrBytes;
@@ -215,24 +255,32 @@ public sealed class ProcessRunner : IDisposable
             var exitCode = process.ExitCode;
             _logger.Info($"ProcessRunner: process exited with code {exitCode}");
 
+            var executionError = stdinWriteError;
+            if (executionError != null && !string.IsNullOrWhiteSpace(decodedStderr))
+            {
+                var stderrSummary = StripAnsiEscapes(decodedStderr.Trim());
+                executionError += $" Child stderr: {Truncate(stderrSummary, 1000)}";
+            }
+
             return new ProcessResult
             {
                 ExitCode = exitCode,
                 StdOut = decodedStdout,
                 StdErr = decodedStderr,
                 RawStdoutBytes = stdoutBytes,
-                RawStderrBytes = stderrBytes
+                RawStderrBytes = stderrBytes,
+                Error = executionError
             };
         }
         catch (Exception ex)
         {
-            _logger.Error($"ProcessRunner: failed to start process '{executable}'", ex);
+            _logger.Error($"ProcessRunner: process execution failed for '{executable}'", ex);
             return new ProcessResult
             {
                 ExitCode = -1,
                 StdOut = string.Empty,
                 StdErr = string.Empty,
-                Error = $"Failed to start process: {ex.Message}"
+                Error = $"Process execution failed: {ex.Message}"
             };
         }
         finally
