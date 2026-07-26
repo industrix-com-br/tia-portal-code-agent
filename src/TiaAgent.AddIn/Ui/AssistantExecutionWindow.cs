@@ -11,7 +11,7 @@ using TiaAgent.AddIn.Diagnostics;
 
 namespace TiaAgent.AddIn.Ui;
 
-internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssistantExecutionLifetime
+internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssistantExecutionLifetime, IDisposable
 {
     private static readonly Regex s_runtimePrefixRegex = new(
         @"^\[Runtime:\s*(.+?)\]\s*\n\s*\n",
@@ -167,7 +167,7 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
             Height = 32,
             IsCancel = true
         };
-        closeButton.Click += (_, __) => _window.Close();
+        closeButton.Click += (_, __) => Window.GetWindow(closeButton)?.Close();
 
         buttonPanel.Children.Add(_copyButton);
         buttonPanel.Children.Add(closeButton);
@@ -219,8 +219,14 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssis
 
     public void CompleteExecution()
     {
+        Dispose();
+    }
+
+    public void Dispose()
+    {
         Interlocked.Exchange(ref _isExecutionComplete, 1);
         TryDisposeCancellationSource();
+        GC.SuppressFinalize(this);
     }
 
     public void ShowLoading(string message)
