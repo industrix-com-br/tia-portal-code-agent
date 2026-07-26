@@ -12,8 +12,6 @@ on:
 permissions:
   contents: write
   actions: read
-  issues: write
-  pull-requests: write
 
 jobs:
   verify-release:
@@ -30,7 +28,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          REPORT_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || 166 }}
         run: |
           set -euo pipefail
 
@@ -65,7 +62,7 @@ jobs:
           fi
 
           verification_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          gh pr comment "$REPORT_PR" --body "Release verification started for **$tag**: $verification_url"
+          echo "Verifying $tag in $verification_url"
 
           run_id=""
           for _ in $(seq 1 30); do
@@ -82,7 +79,7 @@ jobs:
           done
 
           if [[ -z "$run_id" ]]; then
-            gh pr comment "$REPORT_PR" --body "Release verification failed: no workflow_dispatch run was found for $tag."
+            echo "No workflow_dispatch run was found for $tag." >&2
             exit 1
           fi
 
@@ -95,12 +92,12 @@ jobs:
           gh run view "$run_id" --log > release-run.log
 
           if ! grep -Fq "$tag" release-run.log; then
-            gh pr comment "$REPORT_PR" --body "Release verification failed: latest workflow_dispatch run $run_url was not for $tag."
+            echo "Latest workflow_dispatch run $run_url was not for $tag." >&2
             exit 1
           fi
 
           if [[ "$run_exit" -ne 0 ]]; then
-            gh pr comment "$REPORT_PR" --body "Release verification failed: Pipeline run $run_url completed unsuccessfully for $tag."
+            echo "Pipeline run $run_url completed unsuccessfully for $tag." >&2
             exit "$run_exit"
           fi
 
@@ -112,7 +109,7 @@ jobs:
           expected_addin="TiaAgent-$version.addin"
           if ! jq -e --arg package "$expected_package" --arg addin "$expected_addin" \
             'index($package) != null and index($addin) != null' <<< "$assets_json" >/dev/null; then
-            gh pr comment "$REPORT_PR" --body "Release verification failed: GitHub Release $release_url does not contain both expected assets. Found: $assets"
+            echo "GitHub Release $release_url does not contain both expected assets. Found: $assets" >&2
             exit 1
           fi
 
@@ -127,20 +124,23 @@ jobs:
           done
 
           if [[ "$package_status" != "200" ]]; then
-            gh pr comment "$REPORT_PR" --body "Release verification failed: Pipeline succeeded at $run_url and GitHub Release exists at $release_url, but NuGet returned HTTP $package_status for $tag."
+            echo "NuGet returned HTTP $package_status for $tag." >&2
             exit 1
           fi
 
           cat > release-report.md <<EOF
-          Release verification succeeded for **$tag**.
+          ## Release verification succeeded
 
+          - Version: $version
+          - Tag: $tag
           - Pipeline: $run_url
           - GitHub Release: $release_url
           - Release assets: $assets
           - NuGet package endpoint: HTTP 200
           EOF
 
-          gh pr comment "$REPORT_PR" --body-file release-report.md
+          cat release-report.md
+          cat release-report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             git push origin --delete "$trigger_branch"
