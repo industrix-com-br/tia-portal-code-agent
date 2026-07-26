@@ -1,0 +1,29 @@
+name: Release Attempt Cleanup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release-attempt-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Remove residual release-attempt branches
+        shell: bash
+        run: |
+          git push origin --delete agent/run-v0.3.1-recovery || true
+          git push origin --delete release-bootstrap/v0.3.1 || true
+          git push origin --delete release-verify/v0.3.1 || true
