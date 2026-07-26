@@ -61,7 +61,14 @@ jobs:
         run: dotnet restore TiaAgent.sln --locked-mode
 
       - name: Build
-        run: dotnet build TiaAgent.sln --configuration Release --no-restore
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          & dotnet build TiaAgent.sln --configuration Release --no-restore 2>&1 |
+            Tee-Object -FilePath artifacts/build.log
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build failed with exit code $LASTEXITCODE."
+          }
 
       - name: Test all projects
         shell: pwsh
@@ -113,12 +120,12 @@ jobs:
             throw "Test projects failed: $($failed -join ', ')"
           }
 
-      - name: Upload test results
+      - name: Upload CI diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ github.run_id }}
-          path: artifacts/test-results
+          name: ci-diagnostics-${{ github.run_id }}
+          path: artifacts
           if-no-files-found: error
           retention-days: 14
 
