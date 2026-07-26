@@ -140,7 +140,7 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
         {
             if (!string.IsNullOrWhiteSpace(acceptedTaskId))
             {
-                await CancelAcceptedTaskAsync(acceptedTaskId).ConfigureAwait(false);
+                await CancelAcceptedTaskAsync(acceptedTaskId!).ConfigureAwait(false);
             }
 
             AddInLogger.Error($"Error handling menu action '{action}'", ex);

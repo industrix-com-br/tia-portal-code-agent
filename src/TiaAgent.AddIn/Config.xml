@@ -29,10 +29,10 @@
     </TIAPermissions>
 
     <SecurityPermissions>
-      <!-- Required for WPF Window/UserControl creation and display.
-           Without this, TIA Portal's sandbox blocks all WPF UI elements
-           (Window, UserControl) but still allows MessageBox (Win32 dialog).
-           Code path: AssistantPanelFactory.ShowWpfWindow() -->
+      <!-- Required for System.Windows.MessageBox usage in the Add-In.
+           Without this, TIA Portal's sandbox blocks access to WPF types
+           needed by AddInDialogService.ShowWarning/ShowError.
+           Task results are displayed by the external Response Center. -->
       <System.Security.Permissions.UIPermission />
 
       <!-- Required for file-based logging to %LOCALAPPDATA%\TiaAgent\logs\.
@@ -47,13 +47,12 @@
            Code path: AddInLogger.GetLogDir(), Environment.OSVersion, Environment.Version -->
       <System.Security.Permissions.EnvironmentPermission />
 
-      <!-- Required for WPF Window constructor (System.Windows.Window..ctor).
-           The Window constructor calls SecurityPermission.Demand(UnmanagedCode)
-           internally. Without this, new Window() throws SecurityException even
-           when UIPermission is granted.
-           Note: MessageBox (Win32 User32.dll) works without this because it does
-           not go through WPF's CAS demand chain.
-           Code path: new Window() in AssistantPanelFactory.TryShowWpfWindow() -->
+      <!-- Required for WPF type loading inside TIA Portal's partial-trust sandbox.
+           The Add-In no longer creates in-process WPF windows; task results are
+           displayed by the external TiaAgent.ResponseCenter. This permission is
+           still required for the Add-In assembly to load and access System.Windows
+           types such as MessageBox.
+           Code path: AddInDialogService.ShowWarning(), AddInDialogService.ShowError() -->
       <System.Security.Permissions.SecurityPermission.UnmanagedCode />
 
       <!-- Required for HttpClient HTTP requests to the Bridge process.
