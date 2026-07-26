@@ -1,5 +1,6 @@
 #if SIEMENS
 using System;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -13,6 +14,10 @@ namespace TiaAgent.AddIn.Ui;
 
 internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDisposable
 {
+    private static readonly Regex s_runtimePrefixRegex = new(
+        @"^\[Runtime:\s*(.+?)\]\s*\n\s*\n",
+        RegexOptions.Compiled);
+
     private readonly Window _window;
     private readonly TextBlock _headerSubtitle;
     private readonly TextBlock _runtimeLabel;
@@ -251,10 +256,18 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
             if (IsClosed)
                 return Task.CompletedTask;
 
-            _rawContent = result.Markdown;
-            _headerSubtitle.Text = "Result";
-            UpdateRuntimeLabel(result.RuntimeId);
-            _viewer.Document = RenderMarkdown(result.Markdown);
+            var markdown = result.Markdown;
+            var runtimeId = result.RuntimeId;
+            var runtimeMatch = s_runtimePrefixRegex.Match(markdown);
+            if (runtimeMatch.Success)
+            {
+                runtimeId ??= runtimeMatch.Groups[1].Value;
+                markdown = markdown.Substring(runtimeMatch.Length);
+            }
+
+            _rawContent = markdown;
+            UpdateRuntimeLabel(runtimeId);
+            _viewer.Document = RenderMarkdown(markdown);
             _loadingPanel.Visibility = Visibility.Collapsed;
             _viewer.Visibility = Visibility.Visible;
             _copyButton.IsEnabled = true;
