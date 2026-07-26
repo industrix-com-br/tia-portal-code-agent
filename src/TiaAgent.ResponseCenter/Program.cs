@@ -10,7 +10,7 @@ namespace TiaAgent.ResponseCenter;
 
 /// <summary>
 /// Entry point for the Agent Response Center.
-/// Launched by the TIA Portal Add-In with task context as CLI arguments.
+/// Launched by the TIA Portal Add-In after the Bridge accepts a task.
 /// </summary>
 public static class Program
 {
@@ -26,46 +26,40 @@ public static class Program
                 return 1;
             }
 
-            // Ensure single instance per task
             var mutexName = $"TiaAgent_ResponseCenter_{context.TaskId}";
-            using var mutex = new Mutex(true, mutexName, out bool createdNew);
+            using var mutex = new Mutex(true, mutexName, out var createdNew);
 
             if (!createdNew)
             {
-                // Another instance is already showing this task
-                // TODO: Could implement named pipe to signal existing instance to focus
                 return 0;
             }
 
             var app = new Application();
-
-            var monitor = new BridgeTaskMonitor(context);
-            var viewModel = new AgentResponseViewModel(context, monitor);
+            using var monitor = new BridgeTaskMonitor(context);
+            using var viewModel = new AgentResponseViewModel(context, monitor);
 
             var window = new AgentResponseWindow(viewModel)
             {
-                Title = $"TIA Agent — {context.ActionDisplay}"
+                Title = $"TIA Agent - {context.ActionDisplay}"
             };
 
-            // Start monitoring and show window
             viewModel.StartMonitoring();
             window.Show();
-
             app.Run(window);
             return 0;
         }
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"Failed to start TIA Agent:\n\n{ex.Message}",
-                "TIA Agent — Error",
+                $"Failed to start TIA Agent Response Center:\n\n{ex.Message}",
+                "TIA Agent - Error",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             return 1;
         }
     }
 
-    private static AgentResponseContext? ParseArguments(string[] args)
+    internal static AgentResponseContext? ParseArguments(string[] args)
     {
         string? taskId = null;
         string? bridgeUrl = null;
@@ -79,12 +73,15 @@ public static class Program
         string? initialStatus = null;
         string? initialStage = null;
 
-        for (int i = 0; i < args.Length - 1; i++)
+        for (var index = 0; index < args.Length; index++)
         {
-            var key = args[i].ToLowerInvariant();
-            var value = args[i + 1];
-            i++;
+            var key = args[index].ToLowerInvariant();
+            if (!key.StartsWith("--", StringComparison.Ordinal) || index + 1 >= args.Length)
+            {
+                continue;
+            }
 
+            var value = args[++index];
             switch (key)
             {
                 case "--task-id":
@@ -123,17 +120,21 @@ public static class Program
             }
         }
 
-        if (string.IsNullOrEmpty(taskId) || string.IsNullOrEmpty(bridgeUrl) || string.IsNullOrEmpty(action))
+        if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(action))
+        {
             return null;
+        }
+
+        var connection = BridgeConnectionDiscovery.Resolve(bridgeUrl, token);
 
         return new AgentResponseContext
         {
             TaskId = taskId,
-            BridgeUrl = bridgeUrl,
-            AuthToken = token,
+            BridgeUrl = connection.BridgeUrl,
+            AuthToken = connection.AuthToken,
             Action = action,
-            ObjectName = objectName ?? "",
-            ObjectType = objectType ?? "",
+            ObjectName = objectName ?? string.Empty,
+            ObjectType = objectType ?? string.Empty,
             PlcName = plcName,
             ProjectName = projectName,
             CorrelationId = correlationId,
@@ -147,8 +148,8 @@ public static class Program
         MessageBox.Show(
             "Usage: TiaAgent.ResponseCenter.exe\n" +
             "  --task-id <id>\n" +
-            "  --bridge-url <url>\n" +
             "  --action <explain|review|propose>\n" +
+            "  [--bridge-url <url>]\n" +
             "  [--token <bearer-token>]\n" +
             "  [--object-name <name>]\n" +
             "  [--object-type <type>]\n" +
@@ -156,8 +157,9 @@ public static class Program
             "  [--project-name <name>]\n" +
             "  [--correlation-id <id>]\n" +
             "  [--initial-status <status>]\n" +
-            "  [--initial-stage <stage>]",
-            "TIA Agent — Usage",
+            "  [--initial-stage <stage>]\n\n" +
+            "The Bridge URL and token are discovered automatically when omitted.",
+            "TIA Agent - Usage",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
     }
