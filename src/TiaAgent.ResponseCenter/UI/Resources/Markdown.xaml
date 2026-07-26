@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+    <sys:Double x:Key="Markdown.BodyFontSize">13.5</sys:Double>
+    <sys:Double x:Key="Markdown.SmallFontSize">11</sys:Double>
+    <sys:Double x:Key="Markdown.CodeFontSize">12.5</sys:Double>
+    <sys:Double x:Key="Markdown.H1FontSize">18</sys:Double>
+    <sys:Double x:Key="Markdown.H2FontSize">16</sys:Double>
+    <sys:Double x:Key="Markdown.H3FontSize">14.5</sys:Double>
+    <sys:Double x:Key="Markdown.LineHeight">20</sys:Double>
+
+    <Thickness x:Key="Markdown.DocumentPadding">20,18,20,24</Thickness>
+    <Thickness x:Key="Markdown.ParagraphMargin">0,0,0,9</Thickness>
+    <Thickness x:Key="Markdown.CodePadding">10,8</Thickness>
+    <Thickness x:Key="Markdown.CodeMargin">0,4,0,10</Thickness>
+    <Thickness x:Key="Markdown.QuotePadding">10,6,10,4</Thickness>
+    <Thickness x:Key="Markdown.TableCellPadding">7,5</Thickness>
+
+    <Style x:Key="MarkdownViewerStyle" TargetType="FlowDocumentScrollViewer">
+        <Setter Property="Background" Value="{DynamicResource Brush.ContentBackground}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.PrimaryText}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="IsToolBarVisible" Value="False" />
+        <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource Brush.SelectionBackground}" />
+        <Setter Property="Focusable" Value="True" />
+    </Style>
+</ResourceDictionary>
