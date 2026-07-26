@@ -36,7 +36,7 @@ public static class Program
 
             var app = new Application();
             var monitor = new BridgeTaskMonitor(context);
-            using var viewModel = new AgentResponseViewModel(context, monitor);
+            var viewModel = new AgentResponseViewModel(context, monitor);
 
             var window = new AgentResponseWindow(viewModel)
             {
