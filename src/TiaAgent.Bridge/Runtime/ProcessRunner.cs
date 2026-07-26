@@ -198,7 +198,40 @@ public sealed class ProcessRunner : IDisposable
                 stderrBytes = Array.Empty<byte>();
             }
 
-            await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+            try
+            {
+                await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.Warn($"ProcessRunner: process did not exit within {timeout.TotalSeconds}s after closing output streams");
+                KillProcessTree(process);
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdOut = DecodeUtf8OrEmpty(stdoutBytes),
+                    StdErr = DecodeUtf8OrEmpty(stderrBytes),
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    TimedOut = true,
+                    Error = $"Process timed out after {timeout.TotalSeconds} seconds while waiting for exit"
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.Info("ProcessRunner: process cancelled while waiting for exit");
+                KillProcessTree(process);
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdOut = DecodeUtf8OrEmpty(stdoutBytes),
+                    StdErr = DecodeUtf8OrEmpty(stderrBytes),
+                    RawStdoutBytes = stdoutBytes,
+                    RawStderrBytes = stderrBytes,
+                    Cancelled = true,
+                    Error = "Process was cancelled"
+                };
+            }
 
             _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stdout.raw", stdoutBytes));
             _logger.Info(TextPayloadDiagnostics.DescribeUtf8Bytes("1.process.stderr.raw", stderrBytes));
@@ -309,6 +342,18 @@ public sealed class ProcessRunner : IDisposable
             ms.Write(buffer, 0, bytesRead);
         }
         return ms.ToArray();
+    }
+
+    private static string DecodeUtf8OrEmpty(byte[] bytes)
+    {
+        try
+        {
+            return s_strictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return string.Empty;
+        }
     }
 
     private static void KillProcessTree(Process process)
