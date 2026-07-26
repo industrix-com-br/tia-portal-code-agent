@@ -1,0 +1,36 @@
+name: Diagnose Response Center
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore TiaAgent.sln --locked-mode
+      - name: Build with concise failure output
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "response-center-build.log"
+          & dotnet build TiaAgent.sln --configuration Release --no-restore --verbosity minimal *> $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            Get-Content $log |
+              Select-String -Pattern 'error (CS|MSB|NETSDK|NU|XLS|MC)[0-9]+|Build FAILED|error :' |
+              Select-Object -Last 80 |
+              ForEach-Object { Write-Host $_.Line }
+            throw "Build failed with exit code $exitCode."
+          }
+          Get-Content $log | Select-Object -Last 20
