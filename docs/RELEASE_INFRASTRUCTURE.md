@@ -23,11 +23,12 @@ The publication job requires:
 permissions:
   contents: write
   id-token: write
+  issues: write
 ```
 
-`contents: write` allows the workflow to create the GitHub Release and upload its assets.
-
-`id-token: write` enables NuGet Trusted Publishing through OpenID Connect.
+- `contents: write` allows the workflow to create the GitHub Release, upload assets, and create tags;
+- `id-token: write` enables NuGet Trusted Publishing through OpenID Connect;
+- `issues: write` allows commenting on issues for agent-friendly release triggers.
 
 ## NuGet Trusted Publishing
 
@@ -77,15 +78,124 @@ Pull-request CI must not run on this machine.
 
 The release workflow is `.github/workflows/pipeline.yml`.
 
-It must:
+### Triggers
 
-1. accept release tags matching `vX.Y.Z`, `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, or `vX.Y.Z-rc.N`;
-2. verify that the tag resolves to a commit contained in `main`;
-3. run `./build.ps1 release -Version <version>`;
-4. authenticate to NuGet through Trusted Publishing;
-5. publish `TiaAgent.Cli.<version>.nupkg`;
-6. create a GitHub Release;
-7. attach the NuGet package and signed Add-In;
-8. mark prerelease versions correctly.
+The workflow supports four triggers:
 
-Any change to this contract must also update [`RELEASING.md`](RELEASING.md), [`VERSIONING.md`](VERSIONING.md), and the relevant contributor documentation.
+| Trigger | Event | Jobs Run | Version Input |
+|---------|-------|----------|---------------|
+| Push to main | `push` to `main` branch | CI | None (CI only) |
+| Push tag | `push` tag matching `v*` | CI | None (CI only) |
+| Pull request | `pull_request` to `main` | CI | None (CI only) |
+| Manual dispatch | `workflow_dispatch` | CI + Release | `inputs.version` |
+| Issue labeled | `issues` with `release:run` label | CI + Release | Issue title |
+
+**CI-only triggers:** Push to main, push tags, and pull requests run only the CI job (build, test).
+
+**Release triggers:** Manual dispatch and issue-based triggers run the full release pipeline (resolve-release, publish, verify-release).
+
+### Release jobs
+
+When triggered for release:
+
+1. **resolve-release** - validates version, checks preconditions
+2. **publish** - creates tag, builds, publishes to NuGet and GitHub
+3. **verify-release** - verifies publication, runs smoke tests
+
+### Idempotency
+
+The release workflow is idempotent:
+
+- Tag already exists at expected commit: continue
+- Tag exists at different commit: fail
+- NuGet version exists: fail (cannot reuse version)
+- GitHub Release incomplete: rebuild from immutable tag
+- NuGet published but no GitHub Release: retry GitHub Release creation
+
+### Concurrency
+
+Release jobs use a concurrency group to prevent overlapping releases:
+
+```yaml
+concurrency:
+  group: pipeline-release-{version}
+  cancel-in-progress: false
+```
+
+## Agent-friendly release triggers
+
+Agents can trigger releases via:
+
+### Direct dispatch
+
+```bash
+gh workflow run pipeline.yml \
+  --ref main \
+  -f version=0.3.2
+```
+
+### Issue-based trigger
+
+```bash
+gh issue create \
+  --title "Release v0.3.2" \
+  --label "release:run"
+```
+
+**Issue title format (strict):**
+
+```text
+Release vX.Y.Z
+Release vX.Y.Z-alpha.N
+Release vX.Y.Z-beta.N
+Release vX.Y.Z-rc.N
+```
+
+**Actor validation:** The workflow checks that the actor has write, maintain, or admin permission on the repository.
+
+The workflow:
+
+1. Validates the issue title format: `Release vX.Y.Z` or `Release vX.Y.Z-prerelease.N`
+2. Validates the actor has write/maintain/admin permission
+3. Comments the workflow run URL on the issue
+4. Publishes the release
+5. Comments the final release report
+6. Closes the issue on success
+7. Leaves issue open with error message if publication fails
+
+### Trigger contract
+
+| Input | Source | Validation |
+|-------|--------|------------|
+| Version | `inputs.version` or issue title | Must match `X.Y.Z`, `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, or `X.Y.Z-rc.N` |
+| Actor | `github.actor` | Must have write/maintain/admin permission for issue triggers |
+| Tag | Created by workflow | Must not exist or point to same commit as HEAD |
+| NuGet | Checked before publish | Version must not already exist |
+
+## Permissions model
+
+### Workflow permissions
+
+- CI jobs: read-only
+- Release jobs: contents:write, id-token:write, issues:write
+
+### Actor validation
+
+For issue-based triggers, the workflow checks that the actor has write, maintain, or admin permission on the repository.
+
+### Tag creation
+
+Tags are created by the workflow, not by external actors. This ensures:
+
+- Tags always point to HEAD of main at dispatch time
+- Tags are only created after CI verification
+- No orphaned tags from failed release attempts
+
+## Documentation
+
+When changing release infrastructure, update:
+
+- [`RELEASING.md`](RELEASING.md) - operational release steps
+- [`RELEASE_INFRASTRUCTURE.md`](RELEASE_INFRASTRUCTURE.md) - this file
+- [`VERSIONING.md`](VERSIONING.md) - versioning rules
+- `AGENTS.md` - agent instructions

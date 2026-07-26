@@ -23,7 +23,66 @@ The Git tag is the public source of truth for the product version. Do not edit p
 
 See [`VERSIONING.md`](VERSIONING.md) for the complete versioning rules.
 
-## 1. Check the release preconditions
+## Release triggers
+
+The permanent release workflow is `.github/workflows/pipeline.yml`.
+
+### Trigger options
+
+| Trigger | Command | Version Source | Actor Required |
+|---------|---------|----------------|----------------|
+| Manual dispatch | `gh workflow run pipeline.yml --ref main -f version=X.Y.Z` | `inputs.version` parameter | Maintainer |
+| Issue label | Create issue + apply `release:run` label | Issue title: `Release vX.Y.Z` | write/maintain/admin |
+
+### Option 1: Manual dispatch (recommended)
+
+```bash
+gh workflow run pipeline.yml \
+  --ref main \
+  -f version=0.3.2
+```
+
+### Option 2: Issue-based trigger (agent-friendly)
+
+1. Create an issue with title: `Release v0.3.2` or `Release v0.3.2-beta.1`
+2. Apply the label `release:run`
+3. The workflow will execute automatically
+
+**Issue title format (strict):**
+
+```text
+Release v0.3.2
+Release v0.3.2-beta.1
+Release v0.3.2-rc.1
+```
+
+**Actor validation:** Only users with write, maintain, or admin permission can trigger releases via issues.
+
+The workflow:
+
+- extracts the version from the issue title;
+- validates the version format;
+- validates actor permissions;
+- comments the workflow run URL on the issue;
+- publishes the release;
+- comments the final release report;
+- closes the issue on success;
+- leaves issue open with error if publication fails.
+
+### Monitoring a release
+
+```bash
+# List recent workflow runs
+gh run list --workflow pipeline.yml --limit 10
+
+# Watch a specific run
+gh run watch <run-id> --exit-status
+
+# View run details
+gh run view <run-id> --log
+```
+
+## Preconditions
 
 Before creating a release:
 
@@ -36,64 +95,49 @@ Before creating a release:
 
 Do not release directly from a feature branch or pull request branch.
 
-## 2. Validate the release locally
+## What the workflow does
 
-On a Windows machine with TIA Portal V21 and the required signing credentials:
+The release workflow performs these steps:
 
-```powershell
-git switch main
-git pull --ff-only
+1. **Validates the version format** - rejects invalid formats early;
+2. **Resolves HEAD commit** on `main` at dispatch time;
+3. **Checks for existing tag** - fails if tag exists with different commit;
+4. **Checks NuGet** - fails if version already published;
+5. **Creates annotated tag** on HEAD commit;
+6. **Verifies CI** - ensures the commit passed Pipeline CI;
+7. **Builds the release** using `./build.ps1 release -Version <version>`;
+8. **Publishes to NuGet** via Trusted Publishing;
+9. **Creates GitHub Release** with proper prerelease flags;
+10. **Attaches assets**: `TiaAgent.Cli.<version>.nupkg` and `TiaAgent-<version>.addin`;
+11. **Verifies publication** - checks GitHub Release assets and NuGet availability;
+12. **Runs smoke test** - installs and runs `tia-agent version` in clean environment.
 
-.\build.ps1 release -Version X.Y.Z-beta.N
+## Idempotency
+
+The release operation is safe to rerun:
+
+- **Tag absent**: creates it;
+- **Tag exists and points to expected commit**: continues;
+- **Tag exists and points to another commit**: fails clearly;
+- **NuGet package already exists and GitHub Release complete**: reports as already complete;
+- **NuGet package exists but GitHub Release incomplete**: rebuilds from immutable tag;
+- **Never moves an existing tag**;
+- **Never deletes and recreates a published version**;
+- **Never overwrites a NuGet package**;
+- **Never silently ignores a partial release**.
+
+## Validate the published release
+
+After the workflow completes:
+
+1. Check the GitHub Release for correct assets and prerelease flags;
+2. Verify NuGet.org has the package:
+
+```bash
+curl -I https://api.nuget.org/v3-flatcontainer/tiaagent.cli/X.Y.Z/tiaagent.cli.X.Y.Z.nupkg
 ```
 
-The command must complete successfully. It cleans previous outputs, builds, tests, signs and verifies the Add-In, assembles the installation payload, creates the NuGet package, validates its contents, and tests local tool installation.
-
-If the required TIA Portal V21 or signing environment is unavailable, do not report local release validation as successful. State that final validation must be completed by the configured release runner.
-
-## 3. Create and push the release tag
-
-Create an annotated tag from the validated `main` commit:
-
-```powershell
-git tag -a vX.Y.Z-beta.N -m "Release vX.Y.Z-beta.N"
-git push origin vX.Y.Z-beta.N
-```
-
-Never:
-
-- move an existing release tag;
-- delete and recreate a published release tag;
-- reuse a version;
-- tag a commit that is not contained in `main`.
-
-Pushing the tag starts the publication job in `.github/workflows/pipeline.yml`.
-
-## 4. Monitor publication
-
-Verify that the `Publish NuGet` job:
-
-1. checked out the expected tag;
-2. validated that the tag belongs to `main`;
-3. completed `build.ps1 release`;
-4. published `TiaAgent.Cli.<version>.nupkg`;
-5. created the GitHub Release;
-6. attached the NuGet package and signed Add-In.
-
-Expected release assets:
-
-```text
-TiaAgent.Cli.<version>.nupkg
-TiaAgent-<version>.addin
-```
-
-Versions containing `-alpha.N`, `-beta.N`, or `-rc.N` must be marked as prereleases on GitHub.
-
-## 5. Validate the published release
-
-Confirm that the GitHub Release is published and contains the expected assets and generated release notes.
-
-After NuGet.org finishes processing the package, install the exact published version in a clean location:
+3. Install in a clean location:
 
 ```powershell
 # Stable
@@ -103,28 +147,23 @@ dotnet tool install --global TiaAgent.Cli --version X.Y.Z
 dotnet tool install --global TiaAgent.Cli --version X.Y.Z-beta.N
 ```
 
-For an existing installation:
-
-```powershell
-dotnet tool update --global TiaAgent.Cli --version X.Y.Z-beta.N
-```
-
-Then run:
+4. Verify the installed version:
 
 ```powershell
 tia-agent version
 tia-agent doctor
 ```
 
-Confirm that the reported product version matches the release version and that diagnostics complete successfully.
-
 ## Failure handling
 
-If the workflow fails before publishing an immutable artifact, retry the failed job or use the workflow's manual dispatch with the existing release tag.
+If the workflow fails:
 
-If the NuGet version was already published, it cannot be replaced. Correct the issue and create a new version.
-
-If the tag points to incorrect code after publication, do not move the tag. Create a corrected release with a new version.
+1. Check the workflow run logs for the specific failure;
+2. If the tag was not created, fix the issue and re-run the workflow;
+3. If the tag was created but NuGet publication failed, re-run the workflow (idempotent);
+4. If NuGet publication succeeded but GitHub Release is missing, re-run the workflow;
+5. If NuGet version was already published, it cannot be replaced - create a new version;
+6. If the tag points to incorrect code after publication, do not move the tag - create a corrected release with a new version.
 
 Never bypass failed validation, signing, tests, or package verification.
 
@@ -138,7 +177,9 @@ Release agents and maintainers must not:
 - bypass signing or package validation;
 - add permanent NuGet API keys to the normal release workflow;
 - publish Siemens assemblies;
-- report success before checking both GitHub Releases and NuGet.org.
+- report success before checking both GitHub Releases and NuGet.org;
+- create temporary workflows, branches, or marker files for release operations;
+- create PRs solely for release observability.
 
 ## Completion report
 
@@ -157,4 +198,42 @@ NuGet publication:
 Attached artifacts:
 Smoke-test result:
 Known issues:
+```
+
+## Commands reference
+
+### Create a release
+
+```bash
+# Via workflow dispatch
+gh workflow run pipeline.yml --ref main -f version=0.3.2
+
+# Via issue (agent-friendly)
+gh issue create --title "Release v0.3.2" --label "release:run"
+```
+
+### Monitor a release
+
+```bash
+# List runs
+gh run list --workflow pipeline.yml --limit 10
+
+# Watch run
+gh run watch <run-id> --exit-status
+
+# View logs
+gh run view <run-id> --log
+```
+
+### Check release status
+
+```bash
+# List releases
+gh release list --limit 10
+
+# View specific release
+gh release view v0.3.2
+
+# Check NuGet
+curl -I https://api.nuget.org/v3-flatcontainer/tiaagent.cli/0.3.2/tiaagent.cli.0.3.2.nupkg
 ```
