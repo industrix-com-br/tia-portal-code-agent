@@ -1,0 +1,85 @@
+name: Release v0.3.0-beta.7
+
+on:
+  push:
+    branches:
+      - release/v0.3.0-beta.7-trigger
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish v0.3.0-beta.7
+    runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v6
+        with:
+          ref: 9772a88f397588e757881aa73d89f8638fcff2f9
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
+        with:
+          global-json-file: global.json
+
+      - name: Build release
+        shell: pwsh
+        env:
+          TIA_SIGNING_CERT_PFX_BASE64: ${{ secrets.TIA_SIGNING_CERT_PFX_BASE64 }}
+          TIA_SIGNING_CERT_PASSWORD: ${{ secrets.TIA_SIGNING_CERT_PASSWORD }}
+          TIA_SIGNING_CERT_THUMBPRINT: ${{ secrets.TIA_SIGNING_CERT_THUMBPRINT }}
+        run: ./build.ps1 release -Version "0.3.0-beta.7"
+
+      - name: Create release tag
+        shell: pwsh
+        run: |
+          $tag = "v0.3.0-beta.7"
+          $existing = git ls-remote --tags origin "refs/tags/$tag"
+          if ($existing) {
+            throw "Tag '$tag' already exists."
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a $tag -m "Release $tag" HEAD
+          git push origin $tag
+
+      - name: Login to NuGet
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish NuGet package
+        shell: pwsh
+        run: |
+          $package = Get-Item "artifacts/TiaAgent.Cli.0.3.0-beta.7.nupkg"
+          dotnet nuget push $package.FullName `
+            --source "https://api.nuget.org/v3/index.json" `
+            --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" `
+            --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.0-beta.7
+          target_commitish: 9772a88f397588e757881aa73d89f8638fcff2f9
+          name: TIA Portal Code Agent 0.3.0-beta.7
+          generate_release_notes: true
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/TiaAgent.Cli.0.3.0-beta.7.nupkg
+            artifacts/TiaAgent-0.3.0-beta.7.addin
+
+      - name: Remove one-time release branch
+        if: success()
+        shell: pwsh
+        run: git push origin --delete release/v0.3.0-beta.7-trigger
