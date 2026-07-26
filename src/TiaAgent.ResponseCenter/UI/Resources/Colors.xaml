@@ -1,0 +1,54 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Approximate visual tokens inspired by the TIA Portal desktop environment. -->
+    <Color x:Key="Color.ApplicationBackground">#F2F3F4</Color>
+    <Color x:Key="Color.PanelBackground">#E7E9EC</Color>
+    <Color x:Key="Color.ContentBackground">#FFFFFF</Color>
+    <Color x:Key="Color.HeaderBackground">#34445A</Color>
+    <Color x:Key="Color.HeaderForeground">#FFFFFF</Color>
+    <Color x:Key="Color.PrimaryText">#202124</Color>
+    <Color x:Key="Color.SecondaryText">#60656D</Color>
+    <Color x:Key="Color.Border">#B9BEC5</Color>
+    <Color x:Key="Color.SubtleBorder">#D7DADF</Color>
+    <Color x:Key="Color.TiaAccent">#F2A000</Color>
+    <Color x:Key="Color.AssistantAccent">#008F8C</Color>
+    <Color x:Key="Color.SelectionBackground">#DCE8F2</Color>
+    <Color x:Key="Color.HoverBackground">#E9EDF1</Color>
+    <Color x:Key="Color.Success">#2E8B57</Color>
+    <Color x:Key="Color.Warning">#D99100</Color>
+    <Color x:Key="Color.Error">#C63C35</Color>
+    <Color x:Key="Color.DisabledText">#92979D</Color>
+    <Color x:Key="Color.CodeBackground">#F5F6F7</Color>
+    <Color x:Key="Color.CodeBorder">#D5D8DC</Color>
+    <Color x:Key="Color.CodeForeground">#1F2328</Color>
+    <Color x:Key="Color.BlockquoteBackground">#F7F8F9</Color>
+    <Color x:Key="Color.TableHeaderBackground">#E9EDF1</Color>
+    <Color x:Key="Color.TableAlternateBackground">#FAFBFC</Color>
+    <Color x:Key="Color.Link">#006E78</Color>
+
+    <SolidColorBrush x:Key="Brush.ApplicationBackground" Color="{StaticResource Color.ApplicationBackground}" />
+    <SolidColorBrush x:Key="Brush.PanelBackground" Color="{StaticResource Color.PanelBackground}" />
+    <SolidColorBrush x:Key="Brush.ContentBackground" Color="{StaticResource Color.ContentBackground}" />
+    <SolidColorBrush x:Key="Brush.HeaderBackground" Color="{StaticResource Color.HeaderBackground}" />
+    <SolidColorBrush x:Key="Brush.HeaderForeground" Color="{StaticResource Color.HeaderForeground}" />
+    <SolidColorBrush x:Key="Brush.PrimaryText" Color="{StaticResource Color.PrimaryText}" />
+    <SolidColorBrush x:Key="Brush.SecondaryText" Color="{StaticResource Color.SecondaryText}" />
+    <SolidColorBrush x:Key="Brush.Border" Color="{StaticResource Color.Border}" />
+    <SolidColorBrush x:Key="Brush.SubtleBorder" Color="{StaticResource Color.SubtleBorder}" />
+    <SolidColorBrush x:Key="Brush.TiaAccent" Color="{StaticResource Color.TiaAccent}" />
+    <SolidColorBrush x:Key="Brush.AssistantAccent" Color="{StaticResource Color.AssistantAccent}" />
+    <SolidColorBrush x:Key="Brush.SelectionBackground" Color="{StaticResource Color.SelectionBackground}" />
+    <SolidColorBrush x:Key="Brush.HoverBackground" Color="{StaticResource Color.HoverBackground}" />
+    <SolidColorBrush x:Key="Brush.Success" Color="{StaticResource Color.Success}" />
+    <SolidColorBrush x:Key="Brush.Warning" Color="{StaticResource Color.Warning}" />
+    <SolidColorBrush x:Key="Brush.Error" Color="{StaticResource Color.Error}" />
+    <SolidColorBrush x:Key="Brush.DisabledText" Color="{StaticResource Color.DisabledText}" />
+    <SolidColorBrush x:Key="Brush.CodeBackground" Color="{StaticResource Color.CodeBackground}" />
+    <SolidColorBrush x:Key="Brush.CodeBorder" Color="{StaticResource Color.CodeBorder}" />
+    <SolidColorBrush x:Key="Brush.CodeForeground" Color="{StaticResource Color.CodeForeground}" />
+    <SolidColorBrush x:Key="Brush.BlockquoteBackground" Color="{StaticResource Color.BlockquoteBackground}" />
+    <SolidColorBrush x:Key="Brush.TableHeaderBackground" Color="{StaticResource Color.TableHeaderBackground}" />
+    <SolidColorBrush x:Key="Brush.TableAlternateBackground" Color="{StaticResource Color.TableAlternateBackground}" />
+    <SolidColorBrush x:Key="Brush.Link" Color="{StaticResource Color.Link}" />
+    <SolidColorBrush x:Key="Brush.Transparent" Color="Transparent" />
+</ResourceDictionary>
