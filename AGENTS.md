@@ -85,6 +85,14 @@ The Add-In's proposal request asks the runtime to propose improvements. It does 
 - Development install: `.\build.ps1 install-dev`
 - Release validation: `.\build.ps1 release -Version X.Y.Z[-alpha.N|-beta.N|-rc.N]`
 
+## Creating releases
+
+Release creation requires explicit maintainer authorization.
+
+Follow [`docs/RELEASING.md`](docs/RELEASING.md) exactly. Do not edit version files, reuse versions, move published release tags, bypass validation, or report success before verifying both GitHub Releases and NuGet.org.
+
+Release infrastructure and credential configuration are documented in [`docs/RELEASE_INFRASTRUCTURE.md`](docs/RELEASE_INFRASTRUCTURE.md). Do not change that infrastructure as part of a routine release unless the task explicitly requires it.
+
 Additional rules:
 
 - keep engineering objects local to the operation that resolves them;
