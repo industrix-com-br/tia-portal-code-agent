@@ -1,20 +1,18 @@
 using System;
-using System.IO;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 using Markdig;
+using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
-using Markdig.Extensions.Tables;
 using WpfDocuments = System.Windows.Documents;
 
 namespace TiaAgent.ResponseCenter.Views;
 
 /// <summary>
-/// Renders Markdown content into a WPF FlowDocument.
-/// Uses Markdig for parsing and a custom renderer for WPF elements.
-/// Falls back to plain text if rendering fails.
+/// Renders Markdown content into a WPF <see cref="WpfDocuments.FlowDocument"/>.
+/// Markdig is used only for parsing; WPF elements are created explicitly so that
+/// untrusted agent output cannot inject executable XAML or HTML.
 /// </summary>
 public static class MarkdownRenderer
 {
@@ -22,34 +20,17 @@ public static class MarkdownRenderer
         .UseAdvancedExtensions()
         .Build();
 
-    // Colors matching the minimalist palette
-    private static readonly SolidColorBrush HeaderBrush = new(Color.FromRgb(0x1A, 0x1A, 0x1A));
-    private static readonly SolidColorBrush CodeBackground = new(Color.FromRgb(0xF5, 0xF5, 0xF5));
-    private static readonly SolidColorBrush CodeBorder = new(Color.FromRgb(0xE5, 0xE5, 0xE5));
-    private static readonly SolidColorBrush InlineCodeBackground = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
-    private static readonly SolidColorBrush BlockquoteBrush = new(Color.FromRgb(0x66, 0x66, 0x66));
-    private static readonly SolidColorBrush WarningBackground = new(Color.FromRgb(0xFF, 0xF8, 0xE1));
-    private static readonly SolidColorBrush WarningBorder = new(Color.FromRgb(0xFF, 0xD7, 0x00));
-    private static readonly SolidColorBrush TableBorderBrush = new(Color.FromRgb(0xE5, 0xE5, 0xE5));
-    private static readonly SolidColorBrush TableHeaderBrush = new(Color.FromRgb(0xF5, 0xF5, 0xF5));
-
-    static MarkdownRenderer()
-    {
-        // Freeze brushes for performance
-        HeaderBrush.Freeze();
-        CodeBackground.Freeze();
-        CodeBorder.Freeze();
-        InlineCodeBackground.Freeze();
-        BlockquoteBrush.Freeze();
-        WarningBackground.Freeze();
-        WarningBorder.Freeze();
-        TableBorderBrush.Freeze();
-        TableHeaderBrush.Freeze();
-    }
+    private static readonly SolidColorBrush HeaderBrush = CreateFrozenBrush(0x1A, 0x1A, 0x1A);
+    private static readonly SolidColorBrush CodeBackground = CreateFrozenBrush(0xF5, 0xF5, 0xF5);
+    private static readonly SolidColorBrush CodeBorder = CreateFrozenBrush(0xE5, 0xE5, 0xE5);
+    private static readonly SolidColorBrush InlineCodeBackground = CreateFrozenBrush(0xF0, 0xF0, 0xF0);
+    private static readonly SolidColorBrush BlockquoteBrush = CreateFrozenBrush(0x66, 0x66, 0x66);
+    private static readonly SolidColorBrush TableBorderBrush = CreateFrozenBrush(0xE5, 0xE5, 0xE5);
+    private static readonly SolidColorBrush TableHeaderBrush = CreateFrozenBrush(0xF5, 0xF5, 0xF5);
 
     /// <summary>
-    /// Renders Markdown text into a FlowDocument.
-    /// Returns null if rendering fails (caller should fall back to plain text).
+    /// Converts Markdown into a selectable WPF document.
+    /// Returns <see langword="null"/> for empty input or when rendering fails.
     /// </summary>
     public static WpfDocuments.FlowDocument? Render(string markdown)
     {
@@ -58,20 +39,13 @@ public static class MarkdownRenderer
 
         try
         {
-            var document = Markdig.Markdown.Parse(markdown, s_pipeline);
-            var flowDoc = new WpfDocuments.FlowDocument
-            {
-                FontFamily = new FontFamily("Segoe UI"),
-                FontSize = 13,
-                PagePadding = new Thickness(8)
-            };
+            var parsedDocument = Markdown.Parse(markdown, s_pipeline);
+            var flowDocument = CreateDocument("Segoe UI", 13);
 
-            foreach (var block in document)
-            {
-                RenderBlock(flowDoc, block);
-            }
+            foreach (var block in parsedDocument)
+                RenderBlock(flowDocument.Blocks, block);
 
-            return flowDoc;
+            return flowDocument;
         }
         catch
         {
@@ -80,137 +54,154 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
-    /// Creates a plain-text selectable fallback when Markdown rendering fails.
+    /// Creates a selectable plain-text document used when Markdown rendering fails.
     /// </summary>
     public static WpfDocuments.FlowDocument CreatePlainTextFallback(string text)
     {
-        var flowDoc = new WpfDocuments.FlowDocument
-        {
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
-            PagePadding = new Thickness(8)
-        };
-
-        var paragraph = new WpfDocuments.Paragraph(new WpfDocuments.Run(text));
-        flowDoc.Blocks.Add(paragraph);
-        return flowDoc;
+        var flowDocument = CreateDocument("Consolas", 12);
+        flowDocument.Blocks.Add(new WpfDocuments.Paragraph(new WpfDocuments.Run(text ?? string.Empty)));
+        return flowDocument;
     }
 
-    private static void RenderBlock(WpfDocuments.FlowDocument doc, Markdig.Syntax.Block block)
+    private static WpfDocuments.FlowDocument CreateDocument(string fontFamily, double fontSize)
+    {
+        return new WpfDocuments.FlowDocument
+        {
+            FontFamily = new FontFamily(fontFamily),
+            FontSize = fontSize,
+            PagePadding = new Thickness(8)
+        };
+    }
+
+    private static void RenderBlock(WpfDocuments.BlockCollection target, Markdig.Syntax.Block block)
     {
         switch (block)
         {
             case HeadingBlock heading:
-                RenderHeading(doc, heading);
+                target.Add(CreateHeading(heading));
                 break;
+
             case ParagraphBlock paragraph:
-                RenderParagraph(doc, paragraph);
+                target.Add(CreateParagraph(paragraph));
                 break;
+
             case ListBlock list:
-                RenderList(doc, list, 0);
+                RenderList(target, list, depth: 0);
                 break;
+
             case FencedCodeBlock fencedCode:
-                RenderCodeBlock(doc, fencedCode);
+                AddCodeBlock(target, fencedCode);
                 break;
+
             case CodeBlock codeBlock:
-                RenderCodeBlock(doc, codeBlock);
+                AddCodeBlock(target, codeBlock);
                 break;
+
             case QuoteBlock quote:
-                RenderQuoteBlock(doc, quote);
+                target.Add(CreateQuoteBlock(quote));
                 break;
+
             case ThematicBreakBlock:
-                RenderHorizontalRule(doc);
+                target.Add(CreateHorizontalRule());
                 break;
-            case Markdig.Extensions.Tables.Table table:
-                RenderTable(doc, table);
+
+            case Table table:
+                target.Add(CreateTable(table));
                 break;
+
+            case ContainerBlock container:
+                foreach (var child in container)
+                    RenderBlock(target, child);
+                break;
+
             default:
-                // Unknown block type — render as plain text
-                var fallback = new WpfDocuments.Paragraph(new WpfDocuments.Run(block.ToString()));
-                doc.Blocks.Add(fallback);
+                var text = block.ToString();
+                if (!string.IsNullOrWhiteSpace(text))
+                    target.Add(new WpfDocuments.Paragraph(new WpfDocuments.Run(text)));
                 break;
         }
     }
 
-    private static void RenderHeading(WpfDocuments.FlowDocument doc, HeadingBlock heading)
+    private static WpfDocuments.Paragraph CreateHeading(HeadingBlock heading)
     {
         var paragraph = new WpfDocuments.Paragraph
         {
             Foreground = HeaderBrush,
             FontWeight = FontWeights.SemiBold,
+            FontSize = heading.Level switch
+            {
+                1 => 20,
+                2 => 17,
+                3 => 15,
+                _ => 14
+            },
             Margin = new Thickness(0, heading.Level == 1 ? 12 : 8, 0, 4)
         };
 
-        paragraph.FontSize = heading.Level switch
-        {
-            1 => 20,
-            2 => 17,
-            3 => 15,
-            _ => 14
-        };
-
-        RenderInlineChildren(paragraph, heading.Inline);
-        doc.Blocks.Add(paragraph);
+        RenderInlineChildren(paragraph.Inlines, heading.Inline);
+        return paragraph;
     }
 
-    private static void RenderParagraph(WpfDocuments.FlowDocument doc, ParagraphBlock paragraphBlock)
+    private static WpfDocuments.Paragraph CreateParagraph(ParagraphBlock paragraphBlock)
     {
         var paragraph = new WpfDocuments.Paragraph
         {
             Margin = new Thickness(0, 0, 0, 8)
         };
 
-        RenderInlineChildren(paragraph, paragraphBlock.Inline);
-        doc.Blocks.Add(paragraph);
+        RenderInlineChildren(paragraph.Inlines, paragraphBlock.Inline);
+        return paragraph;
     }
 
-    private static void RenderList(WpfDocuments.FlowDocument doc, ListBlock list, int depth)
+    private static void RenderList(WpfDocuments.BlockCollection target, ListBlock list, int depth)
     {
-        int index = 1;
+        var index = 1;
+
         foreach (var item in list)
         {
-            if (item is ListItemBlock listItem)
+            if (item is not ListItemBlock listItem)
+                continue;
+
+            foreach (var child in listItem)
             {
-                foreach (var subBlock in listItem)
+                switch (child)
                 {
-                    if (subBlock is ParagraphBlock para)
+                    case ParagraphBlock paragraphBlock:
                     {
                         var paragraph = new WpfDocuments.Paragraph
                         {
                             Margin = new Thickness(16 + depth * 16, 0, 0, 4)
                         };
 
-                        var marker = list.IsOrdered
-                            ? $"{index}. "
-                            : "• ";
-                        paragraph.Inlines.Add(new WpfDocuments.Run(marker)
+                        paragraph.Inlines.Add(new WpfDocuments.Run(list.IsOrdered ? $"{index}. " : "• ")
                         {
                             Foreground = Brushes.Gray
                         });
+                        RenderInlineChildren(paragraph.Inlines, paragraphBlock.Inline);
+                        target.Add(paragraph);
+                        break;
+                    }
 
-                        RenderInlineChildren(paragraph, para.Inline);
-                        doc.Blocks.Add(paragraph);
-                    }
-                    else if (subBlock is ListBlock nestedList)
-                    {
-                        RenderList(doc, nestedList, depth + 1);
-                    }
+                    case ListBlock nestedList:
+                        RenderList(target, nestedList, depth + 1);
+                        break;
+
+                    default:
+                        RenderBlock(target, child);
+                        break;
                 }
-                index++;
             }
+
+            index++;
         }
     }
 
-    private static void RenderCodeBlock(WpfDocuments.FlowDocument doc, CodeBlock codeBlock)
+    private static void AddCodeBlock(WpfDocuments.BlockCollection target, CodeBlock codeBlock)
     {
-        var code = codeBlock is FencedCodeBlock fenced
-            ? (fenced.Lines.ToString() ?? "").TrimEnd()
-            : (codeBlock.ToString() ?? "").TrimEnd();
-
+        var code = codeBlock.Lines.ToString().TrimEnd();
         if (string.IsNullOrEmpty(code))
             return;
 
-        // Container with border and background
         var section = new WpfDocuments.Section
         {
             Background = CodeBackground,
@@ -220,42 +211,27 @@ public static class MarkdownRenderer
             Padding = new Thickness(8)
         };
 
-        // Language label if available
-        if (codeBlock is FencedCodeBlock fencedBlock && !string.IsNullOrEmpty(fencedBlock.Info))
+        if (codeBlock is FencedCodeBlock fencedCode && !string.IsNullOrWhiteSpace(fencedCode.Info))
         {
-            var langLabel = new WpfDocuments.Paragraph
+            section.Blocks.Add(new WpfDocuments.Paragraph(new WpfDocuments.Run(fencedCode.Info.Trim()))
             {
                 FontSize = 10,
                 Foreground = Brushes.Gray,
                 Margin = new Thickness(0, 0, 0, 4)
-            };
-            langLabel.Inlines.Add(new WpfDocuments.Run(fencedBlock.Info));
-            section.Blocks.Add(langLabel);
+            });
         }
 
-        var codeParagraph = new WpfDocuments.Paragraph
+        section.Blocks.Add(new WpfDocuments.Paragraph(new WpfDocuments.Run(code))
         {
             FontFamily = new FontFamily("Consolas"),
-            FontSize = 12
-        };
-        codeParagraph.Inlines.Add(new WpfDocuments.Run(code));
-        section.Blocks.Add(codeParagraph);
+            FontSize = 12,
+            Margin = new Thickness(0)
+        });
 
-        // Copy button hint
-        var copyHint = new WpfDocuments.Paragraph
-        {
-            FontSize = 10,
-            Foreground = Brushes.Gray,
-            Margin = new Thickness(0, 4, 0, 0),
-            TextAlignment = TextAlignment.Right
-        };
-        copyHint.Inlines.Add(new WpfDocuments.Run("📋 Copy"));
-        section.Blocks.Add(copyHint);
-
-        doc.Blocks.Add(section);
+        target.Add(section);
     }
 
-    private static void RenderQuoteBlock(WpfDocuments.FlowDocument doc, QuoteBlock quote)
+    private static WpfDocuments.Section CreateQuoteBlock(QuoteBlock quote)
     {
         var section = new WpfDocuments.Section
         {
@@ -265,37 +241,37 @@ public static class MarkdownRenderer
             Margin = new Thickness(0, 4, 0, 8)
         };
 
-        foreach (var block in quote)
+        foreach (var child in quote)
         {
-            if (block is ParagraphBlock para)
+            if (child is ParagraphBlock paragraphBlock)
             {
-                var paragraph = new WpfDocuments.Paragraph
-                {
-                    Foreground = BlockquoteBrush,
-                    FontStyle = FontStyles.Italic,
-                    Margin = new Thickness(0, 0, 0, 4)
-                };
-                RenderInlineChildren(paragraph, para.Inline);
+                var paragraph = CreateParagraph(paragraphBlock);
+                paragraph.Foreground = BlockquoteBrush;
+                paragraph.FontStyle = FontStyles.Italic;
+                paragraph.Margin = new Thickness(0, 0, 0, 4);
                 section.Blocks.Add(paragraph);
+            }
+            else
+            {
+                RenderBlock(section.Blocks, child);
             }
         }
 
-        doc.Blocks.Add(section);
+        return section;
     }
 
-    private static void RenderHorizontalRule(WpfDocuments.FlowDocument doc)
+    private static WpfDocuments.Paragraph CreateHorizontalRule()
     {
-        var paragraph = new WpfDocuments.Paragraph
+        return new WpfDocuments.Paragraph
         {
             Margin = new Thickness(0, 8, 0, 8),
             BorderBrush = Brushes.LightGray,
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(0, 8, 0, 0)
         };
-        doc.Blocks.Add(paragraph);
     }
 
-    private static void RenderTable(WpfDocuments.FlowDocument doc, Markdig.Extensions.Tables.Table table)
+    private static WpfDocuments.Table CreateTable(Table table)
     {
         var wpfTable = new WpfDocuments.Table
         {
@@ -305,144 +281,141 @@ public static class MarkdownRenderer
             Margin = new Thickness(0, 4, 0, 8)
         };
 
-        // Add columns
         var columnCount = table.ColumnDefinitions?.Count ?? 0;
         if (columnCount == 0)
         {
-            // Count columns from first row
             foreach (var row in table)
             {
-                if (row is Markdig.Extensions.Tables.TableRow tr)
+                if (row is TableRow tableRow)
                 {
-                    columnCount = tr.Count;
+                    columnCount = tableRow.Count;
                     break;
                 }
             }
         }
 
-        for (int i = 0; i < Math.Max(columnCount, 1); i++)
-        {
+        for (var index = 0; index < Math.Max(columnCount, 1); index++)
             wpfTable.Columns.Add(new WpfDocuments.TableColumn());
-        }
 
         var rowGroup = new WpfDocuments.TableRowGroup();
 
         foreach (var row in table)
         {
-            if (row is Markdig.Extensions.Tables.TableRow tr)
+            if (row is not TableRow tableRow)
+                continue;
+
+            var wpfRow = new WpfDocuments.TableRow();
+
+            foreach (var cell in tableRow)
             {
-                var wpfRow = new WpfDocuments.TableRow();
-                bool isHeader = tr.IsHeader;
+                if (cell is not TableCell tableCell)
+                    continue;
 
-                foreach (var cell in tr)
+                var wpfCell = new WpfDocuments.TableCell
                 {
-                    if (cell is Markdig.Extensions.Tables.TableCell tc)
+                    BorderBrush = TableBorderBrush,
+                    BorderThickness = new Thickness(0, 0, 1, 1),
+                    Padding = new Thickness(6),
+                    Background = tableRow.IsHeader ? TableHeaderBrush : Brushes.Transparent
+                };
+
+                foreach (var child in tableCell)
+                {
+                    if (child is ParagraphBlock paragraphBlock)
                     {
-                        var wpfCell = new WpfDocuments.TableCell
-                        {
-                            BorderBrush = TableBorderBrush,
-                            BorderThickness = new Thickness(0, 0, 1, 1),
-                            Padding = new Thickness(6),
-                            Background = isHeader ? TableHeaderBrush : Brushes.Transparent
-                        };
-
-                        foreach (var block in tc)
-                        {
-                            if (block is ParagraphBlock para)
-                            {
-                                var paragraph = new WpfDocuments.Paragraph
-                                {
-                                    Margin = new Thickness(0),
-                                    FontWeight = isHeader ? FontWeights.SemiBold : FontWeights.Normal
-                                };
-                                RenderInlineChildren(paragraph, para.Inline);
-                                wpfCell.Blocks.Add(paragraph);
-                            }
-                        }
-
-                        wpfRow.Cells.Add(wpfCell);
+                        var paragraph = CreateParagraph(paragraphBlock);
+                        paragraph.Margin = new Thickness(0);
+                        paragraph.FontWeight = tableRow.IsHeader ? FontWeights.SemiBold : FontWeights.Normal;
+                        wpfCell.Blocks.Add(paragraph);
+                    }
+                    else
+                    {
+                        RenderBlock(wpfCell.Blocks, child);
                     }
                 }
 
-                rowGroup.Rows.Add(wpfRow);
+                wpfRow.Cells.Add(wpfCell);
             }
+
+            rowGroup.Rows.Add(wpfRow);
         }
 
         wpfTable.RowGroups.Add(rowGroup);
-        doc.Blocks.Add(wpfTable);
+        return wpfTable;
     }
 
-    private static void RenderInlineChildren(WpfDocuments.Paragraph paragraph, ContainerInline? container)
+    private static void RenderInlineChildren(WpfDocuments.InlineCollection target, ContainerInline? container)
     {
-        if (container == null) return;
+        if (container == null)
+            return;
 
         foreach (var inline in container)
-        {
-            RenderInline(paragraph, inline);
-        }
+            target.Add(CreateInline(inline));
     }
 
-    private static void RenderInline(WpfDocuments.Paragraph paragraph, Markdig.Syntax.Inlines.Inline inline)
+    private static WpfDocuments.Inline CreateInline(Markdig.Syntax.Inlines.Inline inline)
     {
         switch (inline)
         {
             case LiteralInline literal:
-                paragraph.Inlines.Add(new WpfDocuments.Run(literal.Content.ToString()));
-                break;
+                return new WpfDocuments.Run(literal.Content.ToString());
 
             case EmphasisInline emphasis:
-                var run = new WpfDocuments.Run();
-                RenderInlineChildren(run, emphasis);
+            {
+                var span = new WpfDocuments.Span();
+                RenderInlineChildren(span.Inlines, emphasis);
+
                 if (emphasis.DelimiterCount >= 2)
-                    run.FontWeight = FontWeights.Bold;
-                if (emphasis.DelimiterCount == 1)
-                    run.FontStyle = FontStyles.Italic;
-                paragraph.Inlines.Add(run);
-                break;
+                    span.FontWeight = FontWeights.Bold;
+                else
+                    span.FontStyle = FontStyles.Italic;
+
+                return span;
+            }
 
             case CodeInline code:
-                var codeRun = new WpfDocuments.Run(code.Content)
+                return new WpfDocuments.Run(code.Content)
                 {
                     FontFamily = new FontFamily("Consolas"),
                     FontSize = 12,
                     Background = InlineCodeBackground,
                     BaselineAlignment = BaselineAlignment.Center
                 };
-                paragraph.Inlines.Add(codeRun);
-                break;
 
             case LinkInline link:
-                var linkRun = new WpfDocuments.Run();
-                RenderInlineChildren(linkRun, link);
-                linkRun.Foreground = HeaderBrush;
-                linkRun.TextDecorations = TextDecorations.Underline;
-                if (!string.IsNullOrEmpty(link.Url))
-                    linkRun.ToolTip = link.Url;
-                paragraph.Inlines.Add(linkRun);
-                break;
+            {
+                var span = new WpfDocuments.Span
+                {
+                    Foreground = HeaderBrush,
+                    TextDecorations = TextDecorations.Underline,
+                    ToolTip = link.Url
+                };
+                RenderInlineChildren(span.Inlines, link);
+                return span;
+            }
 
             case LineBreakInline:
-                paragraph.Inlines.Add(new WpfDocuments.LineBreak());
-                break;
+                return new WpfDocuments.LineBreak();
 
             case HtmlInline html:
-                // Render HTML tags as literal text
-                paragraph.Inlines.Add(new WpfDocuments.Run(html.Tag));
-                break;
+                return new WpfDocuments.Run(html.Tag);
+
+            case ContainerInline container:
+            {
+                var span = new WpfDocuments.Span();
+                RenderInlineChildren(span.Inlines, container);
+                return span;
+            }
 
             default:
-                // Unknown inline — try ToString
-                var text = inline.ToString();
-                if (!string.IsNullOrEmpty(text))
-                    paragraph.Inlines.Add(new WpfDocuments.Run(text));
-                break;
+                return new WpfDocuments.Run(inline.ToString() ?? string.Empty);
         }
     }
 
-    private static void RenderInlineChildren(WpfDocuments.Run parentRun, ContainerInline? container)
+    private static SolidColorBrush CreateFrozenBrush(byte red, byte green, byte blue)
     {
-        // For emphasis, we can't add children to a Run directly in WPF.
-        // This is handled by the Paragraph-level rendering.
-        // This method exists for completeness but is typically not used.
+        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
     }
 }
