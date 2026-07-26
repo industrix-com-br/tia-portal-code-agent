@@ -103,4 +103,16 @@ public partial class AgentResponseWindow : Window
     {
         _viewModel.ToggleTechnicalDetailsCommand.Execute(null);
     }
+
+    private void TechnicalDetailsExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ShowTechnicalDetails = true;
+        DetailsToggleText.Text = "Hide details";
+    }
+
+    private void TechnicalDetailsExpander_Collapsed(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ShowTechnicalDetails = false;
+        DetailsToggleText.Text = "View details";
+    }
 }

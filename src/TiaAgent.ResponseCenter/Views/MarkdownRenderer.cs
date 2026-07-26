@@ -22,16 +22,16 @@ public static class MarkdownRenderer
         .UseAdvancedExtensions()
         .Build();
 
-    // Colors matching the existing AddIn palette
-    private static readonly SolidColorBrush HeaderBrush = new(Color.FromRgb(0x00, 0x78, 0xD4));
+    // Colors matching the minimalist palette
+    private static readonly SolidColorBrush HeaderBrush = new(Color.FromRgb(0x1A, 0x1A, 0x1A));
     private static readonly SolidColorBrush CodeBackground = new(Color.FromRgb(0xF5, 0xF5, 0xF5));
-    private static readonly SolidColorBrush CodeBorder = new(Color.FromRgb(0xDD, 0xDD, 0xDD));
+    private static readonly SolidColorBrush CodeBorder = new(Color.FromRgb(0xE5, 0xE5, 0xE5));
     private static readonly SolidColorBrush InlineCodeBackground = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
-    private static readonly SolidColorBrush BlockquoteBrush = new(Color.FromRgb(0x6A, 0x73, 0x7D));
+    private static readonly SolidColorBrush BlockquoteBrush = new(Color.FromRgb(0x66, 0x66, 0x66));
     private static readonly SolidColorBrush WarningBackground = new(Color.FromRgb(0xFF, 0xF8, 0xE1));
     private static readonly SolidColorBrush WarningBorder = new(Color.FromRgb(0xFF, 0xD7, 0x00));
-    private static readonly SolidColorBrush TableBorderBrush = new(Color.FromRgb(0xD0, 0xD0, 0xD0));
-    private static readonly SolidColorBrush TableHeaderBrush = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
+    private static readonly SolidColorBrush TableBorderBrush = new(Color.FromRgb(0xE5, 0xE5, 0xE5));
+    private static readonly SolidColorBrush TableHeaderBrush = new(Color.FromRgb(0xF5, 0xF5, 0xF5));
 
     static MarkdownRenderer()
     {

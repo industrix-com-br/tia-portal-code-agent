@@ -3,11 +3,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:converters="clr-namespace:TiaAgent.ResponseCenter.Converters"
         xmlns:local="clr-namespace:TiaAgent.ResponseCenter"
-        Title="{Binding ActionDisplay, StringFormat='AI Code Agent — {0}'}"
+        Title="TIA Agent"
         Width="700" Height="600"
         MinWidth="500" MinHeight="400"
         WindowStartupLocation="CenterScreen"
-        Background="#FFFFFF">
+        Background="#FAFAFA">
 
     <Window.Resources>
         <converters:StateToStatusConverter x:Key="StateToStatus" />
@@ -15,20 +15,85 @@
         <converters:StateToProgressVisibilityConverter x:Key="StateToProgress" />
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:StringToVisibilityConverter x:Key="StringToVis" />
+        <converters:BooleanInverterConverter x:Key="BoolInverter" />
+
+        <!-- Minimalist button style -->
+        <Style x:Key="MinimalButton" TargetType="Button">
+            <Setter Property="Background" Value="#0078D4"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#106EBE"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="#CCCCCC"/>
+                                <Setter Property="Foreground" Value="#999999"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Secondary button style -->
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#666666"/>
+            <Setter Property="BorderBrush" Value="#E5E5E5"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#F5F5F5"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="#F5F5F5"/>
+                                <Setter Property="Foreground" Value="#CCCCCC"/>
+                                <Setter Property="BorderBrush" Value="#EEEEEE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Row 0: Header -->
-        <Border Grid.Row="0" Background="#0078D4" Padding="12,10">
+        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E5E5E5" BorderThickness="0,0,0,1" Padding="16,12">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -36,242 +101,234 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="AI Code Agent"
-                               Foreground="White"
+                    <TextBlock Text="TIA Agent"
+                               Foreground="#1A1A1A"
                                FontSize="16"
                                FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding ActionDisplay}"
-                               Foreground="#CCFFFFFF"
-                               FontSize="12"
-                               Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding HeaderDisplay}"
+                               Foreground="#666666"
+                               FontSize="13"
+                               Margin="0,4,0,0" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="1"
-                           VerticalAlignment="Center"
-                           Foreground="#CCFFFFFF"
-                           FontSize="11"
-                           Text="{Binding RuntimeId, StringFormat='Runtime: {0}'}"
-                           Visibility="{Binding RuntimeId, Converter={StaticResource StringToVis}}" />
+                <!-- Copy response button (top right) -->
+                <Button Grid.Column="1"
+                        Content="Copy response"
+                        Command="{Binding CopyResponseCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="12,6"
+                        FontSize="12"
+                        Visibility="{Binding ShowCopyButton, Converter={StaticResource BoolToVis}}"
+                        VerticalAlignment="Center" />
             </Grid>
         </Border>
 
-        <!-- Row 1: Context info -->
-        <Border Grid.Row="1" Background="#F6F6F6" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1" Padding="12,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <!-- Object name -->
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Object:" FontWeight="SemiBold" FontSize="12" Margin="0,0,4,0" />
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ObjectName}" FontSize="12" />
-
-                <!-- Type -->
-                <TextBlock Grid.Row="0" Grid.Column="2" Text="Type:" FontWeight="SemiBold" FontSize="12" Margin="12,0,4,0"
-                           Visibility="{Binding ObjectType, Converter={StaticResource StringToVis}}" />
-                <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding ObjectType}" FontSize="12"
-                           Visibility="{Binding ObjectType, Converter={StaticResource StringToVis}}" />
-
-                <!-- PLC -->
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="PLC:" FontWeight="SemiBold" FontSize="12" Margin="0,2,4,0"
-                           Visibility="{Binding PlcName, Converter={StaticResource StringToVis}}" />
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PlcName}" FontSize="12" Margin="0,2,0,0"
-                           Visibility="{Binding PlcName, Converter={StaticResource StringToVis}}" />
-
-                <!-- Project -->
-                <TextBlock Grid.Row="1" Grid.Column="2" Text="Project:" FontWeight="SemiBold" FontSize="12" Margin="12,2,4,0"
-                           Visibility="{Binding ProjectName, Converter={StaticResource StringToVis}}" />
-                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding ProjectName}" FontSize="12" Margin="0,2,0,0"
-                           Visibility="{Binding ProjectName, Converter={StaticResource StringToVis}}" />
-            </Grid>
-        </Border>
-
-        <!-- Row 2: Status and progress -->
-        <Border Grid.Row="2" Padding="12,8" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="8" Height="8" Fill="{Binding State, Converter={StaticResource StateToColor}}"
-                             VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <TextBlock Text="{Binding State, Converter={StaticResource StateToStatus}}"
-                               FontWeight="SemiBold" FontSize="12"
-                               VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding StatusMessage}"
-                               FontSize="12" Margin="8,0,0,0"
-                               VerticalAlignment="Center"
-                               Foreground="#666666" />
-                </StackPanel>
-
-                <!-- Progress bar -->
-                <ProgressBar IsIndeterminate="True"
-                             Height="4"
-                             Margin="0,6,0,0"
-                             Visibility="{Binding State, Converter={StaticResource StateToProgress}}"
-                             Foreground="#0078D4" />
-
-                <!-- Progress message -->
-                <TextBlock Text="{Binding ProgressMessage}"
-                           FontSize="11"
-                           Foreground="#888888"
-                           Margin="0,4,0,0"
-                           TextWrapping="Wrap"
-                           Visibility="{Binding ProgressMessage, Converter={StaticResource StringToVis}}" />
-            </StackPanel>
-        </Border>
-
-        <!-- Row 3: Content area (response / error / approval) -->
-        <Grid Grid.Row="3" Margin="0">
+        <!-- Row 1: Main content area -->
+        <Grid Grid.Row="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
+            <!-- Loading state -->
+            <StackPanel Grid.Row="0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding ShowLoading, Converter={StaticResource BoolToVis}}">
+                <ProgressBar IsIndeterminate="True"
+                             Width="40" Height="40"
+                             Style="{StaticResource {x:Null}}"
+                             Foreground="#0078D4">
+                    <ProgressBar.Template>
+                        <ControlTemplate TargetType="ProgressBar">
+                            <Grid>
+                                <Ellipse Width="40" Height="40" Stroke="#E5E5E5" StrokeThickness="4"/>
+                                <Ellipse Width="40" Height="40" Stroke="#0078D4" StrokeThickness="4"
+                                         StrokeDashArray="1.5 8.5"
+                                         RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <RotateTransform x:Name="PART_Indicator" Angle="0"/>
+                                    </Ellipse.RenderTransform>
+                                    <Ellipse.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                     To="360" Duration="0:0:1"
+                                                                     RepeatBehavior="Forever"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
+                                    </Ellipse.Triggers>
+                                </Ellipse>
+                            </Grid>
+                        </ControlTemplate>
+                    </ProgressBar.Template>
+                </ProgressBar>
+                <TextBlock Text="Analyzing code…"
+                           FontSize="14"
+                           Foreground="#666666"
+                           HorizontalAlignment="Center"
+                           Margin="0,16,0,0" />
+                <TextBlock Text="Waiting for Agent Code"
+                           FontSize="12"
+                           Foreground="#999999"
+                           HorizontalAlignment="Center"
+                           Margin="0,4,0,0" />
+            </StackPanel>
+
             <!-- Response content -->
             <FlowDocumentScrollViewer x:Name="ResponseViewer"
                                        Grid.Row="0"
-                                       Margin="8"
+                                       Margin="16"
                                        Visibility="{Binding ShowResponse, Converter={StaticResource BoolToVis}}"
                                        VerticalScrollBarVisibility="Auto"
                                        HorizontalScrollBarVisibility="Disabled"
                                        BorderThickness="0" />
 
             <!-- Error display -->
-            <Border Grid.Row="0"
-                    Margin="8"
-                    Visibility="{Binding ShowError, Converter={StaticResource BoolToVis}}"
-                    BorderBrush="#D13438"
-                    BorderThickness="1"
-                    CornerRadius="4"
-                    Background="#FFF0F0">
-                <StackPanel Margin="12">
-                    <TextBlock Text="⚠ Error" FontWeight="SemiBold" FontSize="14" Foreground="#D13438" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding ErrorDetails.UserMessage}"
-                               TextWrapping="Wrap"
-                               FontSize="13"
-                               Margin="0,0,0,8" />
+            <StackPanel Grid.Row="0"
+                        Margin="24"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding ShowError, Converter={StaticResource BoolToVis}}"
+                        MaxWidth="500">
+                <TextBlock Text="The request could not be completed."
+                           FontWeight="SemiBold"
+                           FontSize="14"
+                           Foreground="#1A1A1A"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,8" />
+                <TextBlock Text="Agent Code did not return a valid response."
+                           FontSize="13"
+                           Foreground="#666666"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,16" />
 
-                    <!-- Technical details toggle -->
-                    <TextBlock Text="Technical Details"
-                               Foreground="#0078D4"
-                               Cursor="Hand"
-                               FontSize="11"
-                               Margin="0,0,0,4"
-                               MouseLeftButtonDown="ToggleTechnicalDetails_Click">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Text" Value="▶ Show Technical Details" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ErrorDetails.ShowTechnicalDetails}" Value="True">
-                                        <Setter Property="Text" Value="▼ Hide Technical Details" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                <!-- Technical details expander -->
+                <Border BorderBrush="#E5E5E5" BorderThickness="1" CornerRadius="4" Background="#FFFFFF">
+                    <Expander x:Name="TechnicalDetailsExpander"
+                              Padding="12,8"
+                              Expanded="TechnicalDetailsExpander_Expanded"
+                              Collapsed="TechnicalDetailsExpander_Collapsed">
+                        <Expander.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="DetailsToggleText"
+                                           Text="View details"
+                                           Foreground="#0078D4"
+                                           FontSize="12"
+                                           Cursor="Hand" />
+                            </StackPanel>
+                        </Expander.Header>
+                        <TextBox Text="{Binding ErrorDetails.TechnicalDetails, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 FontFamily="Consolas"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"
+                                 MaxHeight="150"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Background="#F8F8F8"
+                                 BorderBrush="#E5E5E5"
+                                 BorderThickness="1"
+                                 Margin="0,8,0,0" />
+                    </Expander>
+                </Border>
 
-                    <TextBox Text="{Binding ErrorDetails.TechnicalDetails, Mode=OneWay}"
-                             IsReadOnly="True"
-                             FontFamily="Consolas"
-                             FontSize="11"
-                             TextWrapping="Wrap"
-                             MaxHeight="150"
-                             VerticalScrollBarVisibility="Auto"
-                             Background="#FAFAFA"
-                             BorderBrush="#DDDDDD"
-                             Margin="0,0,0,8"
-                             Visibility="{Binding ErrorDetails.ShowTechnicalDetails, Converter={StaticResource BoolToVis}}" />
+                <!-- Correlation ID -->
+                <TextBlock FontSize="11"
+                           Foreground="#999999"
+                           TextAlignment="Center"
+                           Margin="0,12,0,0"
+                           Visibility="{Binding ErrorDetails.CorrelationId, Converter={StaticResource StringToVis}}">
+                    <Run Text="Correlation: " /><Run Text="{Binding ErrorDetails.CorrelationId, Mode=OneWay}" />
+                </TextBlock>
 
-                    <!-- Correlation ID -->
-                    <TextBlock FontSize="11" Foreground="#888888"
-                               Visibility="{Binding ErrorDetails.CorrelationId, Converter={StaticResource StringToVis}}">
-                        <Run Text="Correlation: " /><Run Text="{Binding ErrorDetails.CorrelationId, Mode=OneWay}" />
-                    </TextBlock>
+                <!-- Action buttons -->
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            Margin="0,16,0,0">
+                    <Button Content="Try again"
+                            Command="{Binding RetryCommand}"
+                            Style="{StaticResource MinimalButton}"
+                            Margin="0,0,8,0" />
+                    <Button Content="Close"
+                            Command="{Binding CloseCommand}"
+                            Style="{StaticResource SecondaryButton}" />
                 </StackPanel>
-            </Border>
+            </StackPanel>
 
             <!-- Approval preview placeholder -->
             <Border Grid.Row="0"
-                    Margin="8"
+                    Margin="24"
                     Visibility="{Binding ShowApproval, Converter={StaticResource BoolToVis}}"
                     BorderBrush="#FF8C00"
                     BorderThickness="1"
                     CornerRadius="4"
-                    Background="#FFF8E1">
-                <StackPanel Margin="12">
-                    <TextBlock Text="⏳ Approval Required" FontWeight="SemiBold" FontSize="14" Foreground="#FF8C00" Margin="0,0,0,8" />
+                    Background="#FFF8E1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="500">
+                <StackPanel Margin="16">
+                    <TextBlock Text="Approval Required"
+                               FontWeight="SemiBold"
+                               FontSize="14"
+                               Foreground="#FF8C00"
+                               Margin="0,0,0,8" />
                     <TextBlock Text="The AI agent is proposing changes that require your review."
                                TextWrapping="Wrap"
                                FontSize="13"
+                               Foreground="#666666"
                                Margin="0,0,0,8" />
                     <TextBlock Text="Approval workflow will be available in a future update."
-                               FontSize="11"
-                               Foreground="#888888"
+                               FontSize="12"
+                               Foreground="#999999"
                                FontStyle="Italic" />
                 </StackPanel>
             </Border>
-
-            <!-- Empty state -->
-            <TextBlock Grid.Row="0"
-                       Text="Waiting for response…"
-                       Foreground="#AAAAAA"
-                       FontSize="13"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"
-                       Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
-        <!-- Row 4: Action buttons -->
-        <Border Grid.Row="4" Background="#F6F6F6" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="12,8">
+        <!-- Row 2: Footer with text input -->
+        <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#E5E5E5" BorderThickness="0,1,0,0" Padding="12,8">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- Correlation ID -->
-                <TextBlock Grid.Column="0"
-                           VerticalAlignment="Center"
-                           FontSize="11"
-                           Foreground="#888888"
-                           Visibility="{Binding CorrelationId, Converter={StaticResource StringToVis}}">
-                    <Run Text="Correlation: " /><Run Text="{Binding CorrelationId}" />
-                </TextBlock>
+                <Grid Grid.Column="0">
+                    <!-- Placeholder text -->
+                    <TextBlock Text="Ask something about the selected code…"
+                               Foreground="#999999"
+                               FontSize="13"
+                               VerticalAlignment="Center"
+                               Margin="10,0"
+                               IsHitTestVisible="False"
+                               Visibility="{Binding UserInput, Converter={StaticResource StringToVis}, ConverterParameter=Invert}"
+                               x:Name="PlaceholderText" />
 
-                <!-- Buttons -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <!-- Copy button -->
-                    <Button Content="{x:Static local:Strings.ButtonCopyAll}"
-                            Command="{Binding CopyCommand}"
-                            Padding="12,4"
-                            Margin="0,0,6,0"
-                            Visibility="{Binding ShowResponse, Converter={StaticResource BoolToVis}}" />
+                    <!-- Text input -->
+                    <TextBox x:Name="InputTextBox"
+                             Text="{Binding UserInput, UpdateSourceTrigger=PropertyChanged}"
+                             FontSize="13"
+                             Padding="8,6"
+                             VerticalContentAlignment="Center"
+                             BorderBrush="#E5E5E5"
+                             BorderThickness="1"
+                             Background="#F5F5F5"
+                             MaxHeight="100"
+                             TextWrapping="Wrap"
+                             AcceptsReturn="False"
+                             IsEnabled="{Binding ShowTextInput}" />
+                </Grid>
 
-                    <!-- Cancel button -->
-                    <Button Content="{x:Static local:Strings.ButtonCancel}"
-                            Command="{Binding CancelCommand}"
-                            Padding="12,4"
-                            Margin="0,0,6,0"
-                            Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}" />
-
-                    <!-- Retry button -->
-                    <Button Content="{x:Static local:Strings.ButtonRetry}"
-                            Command="{Binding RetryCommand}"
-                            Padding="12,4"
-                            Margin="0,0,6,0"
-                            Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}" />
-
-                    <!-- Close button -->
-                    <Button Content="{x:Static local:Strings.ButtonClose}"
-                            Command="{Binding CloseCommand}"
-                            Padding="12,4"
-                            IsCancel="True" />
-                </StackPanel>
+                <Button Grid.Column="1"
+                        Content="Send"
+                        Command="{Binding SendCommand}"
+                        Style="{StaticResource MinimalButton}"
+                        Margin="8,0,0,0"
+                        Padding="16,8"
+                        IsEnabled="{Binding ShowTextInput}" />
             </Grid>
         </Border>
     </Grid>

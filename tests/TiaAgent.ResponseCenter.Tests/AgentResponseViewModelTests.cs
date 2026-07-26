@@ -35,6 +35,60 @@ public class AgentResponseViewModelTests
         ctx.CorrelationId.Should().Be("tia-abc123");
     }
 
+    [Theory]
+    [InlineData("explain", "Explain code · FB_Conveyor · Function Block")]
+    [InlineData("review", "Review code · FB_Conveyor · Function Block")]
+    [InlineData("propose", "Propose improvements · FB_Conveyor · Function Block")]
+    public void HeaderDisplay_FormatsCorrectly(string action, string expected)
+    {
+        var ctx = new AgentResponseContext
+        {
+            TaskId = "task123",
+            BridgeUrl = "http://localhost:9999",
+            Action = action,
+            ObjectName = "FB_Conveyor",
+            ObjectType = "Function Block"
+        };
+        var monitor = new TiaAgent.ResponseCenter.Services.BridgeTaskMonitor(ctx);
+        var vm = new AgentResponseViewModel(ctx, monitor);
+
+        vm.HeaderDisplay.Should().Be(expected);
+    }
+
+    [Fact]
+    public void HeaderDisplay_ShowsActionOnlyWhenNoObjectName()
+    {
+        var ctx = new AgentResponseContext
+        {
+            TaskId = "task123",
+            BridgeUrl = "http://localhost:9999",
+            Action = "explain",
+            ObjectName = "",
+            ObjectType = ""
+        };
+        var monitor = new TiaAgent.ResponseCenter.Services.BridgeTaskMonitor(ctx);
+        var vm = new AgentResponseViewModel(ctx, monitor);
+
+        vm.HeaderDisplay.Should().Be("Explain code");
+    }
+
+    [Fact]
+    public void HeaderDisplay_ShowsObjectNameOnlyWhenNoType()
+    {
+        var ctx = new AgentResponseContext
+        {
+            TaskId = "task123",
+            BridgeUrl = "http://localhost:9999",
+            Action = "explain",
+            ObjectName = "OB1",
+            ObjectType = ""
+        };
+        var monitor = new TiaAgent.ResponseCenter.Services.BridgeTaskMonitor(ctx);
+        var vm = new AgentResponseViewModel(ctx, monitor);
+
+        vm.HeaderDisplay.Should().Be("Explain code · OB1");
+    }
+
     [Fact]
     public void ErrorDetailsViewModel_InitializesWithDefaults()
     {
