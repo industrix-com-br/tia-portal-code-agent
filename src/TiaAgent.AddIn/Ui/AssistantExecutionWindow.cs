@@ -11,7 +11,7 @@ using TiaAgent.AddIn.Diagnostics;
 
 namespace TiaAgent.AddIn.Ui;
 
-internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDisposable
+internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IAssistantExecutionLifetime
 {
     private static readonly Regex s_runtimePrefixRegex = new(
         @"^\[Runtime:\s*(.+?)\]\s*\n\s*\n",
@@ -28,6 +28,7 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
     private readonly CancellationToken _cancellationToken;
     private string _rawContent = string.Empty;
     private int _isClosed;
+    private int _isExecutionComplete;
     private int _isDisposed;
 
     public AssistantExecutionWindow(string action, string correlationId, string targetObject)
@@ -202,8 +203,13 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
 
         _window.Closed += (_, __) =>
         {
-            if (Interlocked.Exchange(ref _isClosed, 1) == 0)
-                Dispose();
+            if (Interlocked.Exchange(ref _isClosed, 1) != 0)
+                return;
+
+            if (!_closeCancellation.IsCancellationRequested)
+                _closeCancellation.Cancel();
+
+            TryDisposeCancellationSource();
         };
     }
 
@@ -211,16 +217,10 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
 
     public CancellationToken CancellationToken => _cancellationToken;
 
-    public void Dispose()
+    public void CompleteExecution()
     {
-        if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
-            return;
-
-        if (!_closeCancellation.IsCancellationRequested)
-            _closeCancellation.Cancel();
-
-        _closeCancellation.Dispose();
-        GC.SuppressFinalize(this);
+        Interlocked.Exchange(ref _isExecutionComplete, 1);
+        TryDisposeCancellationSource();
     }
 
     public void ShowLoading(string message)
@@ -355,6 +355,15 @@ internal sealed class AssistantExecutionWindow : IAssistantExecutionView, IDispo
         }
 
         _window.Dispatcher.Invoke(action);
+    }
+
+    private void TryDisposeCancellationSource()
+    {
+        if (Volatile.Read(ref _isClosed) == 0 || Volatile.Read(ref _isExecutionComplete) == 0)
+            return;
+
+        if (Interlocked.Exchange(ref _isDisposed, 1) == 0)
+            _closeCancellation.Dispose();
     }
 
     private void UpdateRuntimeLabel(string? runtimeId)
