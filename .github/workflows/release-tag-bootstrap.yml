@@ -1,0 +1,45 @@
+name: Release Tag Bootstrap
+
+on:
+  create:
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    if: github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-trigger/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create annotated release tag
+        shell: bash
+        env:
+          TRIGGER_BRANCH: ${{ github.event.ref }}
+          TARGET_SHA: 48fb337c0ffb3acdad12ec677812c720e6d3a3b0
+        run: |
+          set -euo pipefail
+
+          tag="${TRIGGER_BRANCH#release-trigger/}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
+            echo "Invalid release tag derived from trigger branch: $tag" >&2
+            exit 1
+          fi
+
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag already exists: $tag" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" "$TARGET_SHA" -m "Release $tag"
+          git push origin "refs/tags/$tag"
+          git push origin --delete "$TRIGGER_BRANCH"
