@@ -1,26 +1,21 @@
-name: Release Verification
+name: Release Recovery Verification
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/release-verification.yml
   pull_request:
     branches:
       - main
 
 permissions:
-  actions: read
-  contents: write
+  actions: write
+  contents: read
   issues: write
   pull-requests: write
 
 jobs:
-  verify:
-    if: github.event_name == 'push' || github.event.pull_request.number == 178
+  recover-and-verify:
+    if: github.event.pull_request.number == 181
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -28,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify v0.3.1 publication
+      - name: Recover and verify v0.3.1 publication
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,22 +36,74 @@ jobs:
 
           package_name="TiaAgent.Cli.${VERSION}.nupkg"
           addin_name="TiaAgent-${VERSION}.addin"
-          nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${VERSION}/tiaagent.cli.${VERSION}.nupkg"
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
           nuget_page="https://www.nuget.org/packages/TiaAgent.Cli/${VERSION}"
+          nuget_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/${VERSION}/tiaagent.cli.${VERSION}.nupkg"
 
-          recent_runs="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?per_page=20")"
-          run_snapshot="$(jq -r '
-            [.workflow_runs[] | select(.name == "Pipeline" or .name == "Release Verification")][0:12]
-            | map("- [\(.name) #\(.run_number)](\(.html_url)): event=\(.event), status=\(.status), conclusion=\(.conclusion // "pending"), created=\(.created_at)")
-            | join("\n")
-          ' <<< "$recent_runs")"
-          gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "## ${TAG} workflow snapshot
+          git fetch origin main --tags
+          tag_commit="$(git rev-list -n 1 "$TAG")"
+          if [[ "$tag_commit" != "$TARGET_SHA" ]]; then
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release recovery aborted: ${TAG} resolves to \`${tag_commit}\`, expected \`${TARGET_SHA}\`."
+            exit 1
+          fi
 
-${run_snapshot}"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release recovery aborted: tagged commit \`${tag_commit}\` is not contained in \`main\`."
+            exit 1
+          fi
+
+          before_runs="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/pipeline.yml/runs?event=workflow_dispatch&per_page=50")"
+          before_ids="$(jq '[.workflow_runs[].id]' <<< "$before_runs")"
+
+          gh workflow run pipeline.yml --repo "$GITHUB_REPOSITORY" --ref main -f release_tag="$TAG"
+          gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Recovery dispatch started for ${TAG} using the existing immutable tag and the official \`pipeline.yml\` workflow."
+
+          pipeline_record=""
+          for attempt in $(seq 1 60); do
+            runs_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/pipeline.yml/runs?event=workflow_dispatch&per_page=50")"
+            pipeline_record="$(jq -r --argjson before "$before_ids" '
+              [.workflow_runs[] | .id as $id | select(($before | index($id)) == null)]
+              | sort_by(.created_at)
+              | last
+              | if . then [.id, .status, (.conclusion // ""), .html_url] | @tsv else empty end
+            ' <<< "$runs_json")"
+            if [[ -n "$pipeline_record" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ -z "$pipeline_record" ]]; then
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Recovery failed: the dispatched Pipeline run could not be located."
+            exit 1
+          fi
+
+          IFS=$'\t' read -r pipeline_id pipeline_status pipeline_conclusion pipeline_url <<< "$pipeline_record"
+          gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Official release pipeline located: [run ${pipeline_id}](${pipeline_url})."
+
+          for attempt in $(seq 1 180); do
+            run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${pipeline_id}")"
+            pipeline_status="$(jq -r '.status' <<< "$run_json")"
+            pipeline_conclusion="$(jq -r '.conclusion // ""' <<< "$run_json")"
+            if [[ "$pipeline_status" == "completed" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ "$pipeline_status" != "completed" ]]; then
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Recovery timed out while waiting for [Pipeline run ${pipeline_id}](${pipeline_url})."
+            exit 1
+          fi
+
+          if [[ "$pipeline_conclusion" != "success" ]]; then
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Recovery failed: [Pipeline run ${pipeline_id}](${pipeline_url}) concluded with \`${pipeline_conclusion}\`."
+            exit 1
+          fi
 
           release_json=""
           verified=false
-          for attempt in $(seq 1 80); do
+          for attempt in $(seq 1 60); do
             if release_json="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null)"; then
               release_ok="$(jq -r --arg tag "$TAG" --arg package "$package_name" --arg addin "$addin_name" '
                 (.tag_name == $tag)
@@ -71,57 +118,25 @@ ${run_snapshot}"
                 break
               fi
             fi
-
-            echo "Release not fully available yet (attempt $attempt/80)."
             sleep 15
           done
 
           if [[ "$verified" != "true" ]]; then
-            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release verification for ${TAG} timed out before the GitHub Release assets and NuGet package were both available."
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Pipeline run ${pipeline_id} succeeded, but the GitHub Release assets and NuGet package did not become simultaneously available."
             exit 1
           fi
 
-          release_url="$(jq -r '.html_url' <<< "$release_json")"
-          published_at="$(jq -r '.published_at' <<< "$release_json")"
-
-          runs_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=50")"
-          pipeline_record="$(jq -r --arg published "$published_at" '
-            [.workflow_runs[]
-              | select(.name == "Pipeline")
-              | select(.status == "completed" and .conclusion == "success")
-              | select(.created_at <= $published and .updated_at >= $published)]
-            | sort_by(.created_at)
-            | last
-            | if . then [.id, .html_url] | @tsv else empty end
-          ' <<< "$runs_json")"
-
-          if [[ -z "$pipeline_record" ]]; then
-            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release verification found ${TAG}, its expected assets, and NuGet publication, but could not correlate a successful official Pipeline run."
-            exit 1
-          fi
-
-          IFS=$'\t' read -r pipeline_id pipeline_url <<< "$pipeline_record"
+          asset_report="$(jq -r '.assets | map("- `" + .name + "` — " + (.size | tostring) + " bytes" + (if .digest then ", " + .digest else "" end)) | join("\n")' <<< "$release_json")"
           report="$(cat <<EOF
           ## ${TAG} release verification
 
           - Pipeline: [run ${pipeline_id}](${pipeline_url}) — success
           - GitHub Release: [${TAG}](${release_url}) — published, stable
           - NuGet: [TiaAgent.Cli ${VERSION}](${nuget_page}) — available
-          - Assets: \`${package_name}\`, \`${addin_name}\`
           - Tagged commit: \`${TARGET_SHA}\`
+
+          ### Attached artifacts
+          ${asset_report}
           EOF
           )"
-
           gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "$report"
-
-          echo "Pipeline run: $pipeline_id $pipeline_url"
-          echo "GitHub Release: $release_url"
-          echo "NuGet package: $nuget_page"
-          echo "Assets: $package_name, $addin_name"
-
-      - name: Remove temporary trigger branches
-        if: always()
-        shell: bash
-        run: |
-          git push origin --delete release-bootstrap/v0.3.1 || true
-          git push origin --delete release-verify/v0.3.1 || true
