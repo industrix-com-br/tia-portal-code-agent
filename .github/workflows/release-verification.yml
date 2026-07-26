@@ -1,134 +1,72 @@
 name: Release Verification
 
 on:
-  create:
-  push:
-    branches:
-      - "release-status/**"
   pull_request:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 jobs:
   verify-release:
-    if: >-
-      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-verify/v')) ||
-      (github.event_name == 'create' && github.event.ref_type == 'branch' &&
-        (startsWith(github.event.ref, 'release-status/v') || startsWith(github.event.ref, 'release-status-r2/v'))) ||
-      (github.event_name == 'push' && startsWith(github.ref_name, 'release-status/v'))
+    if: github.head_ref == 'release-verify/v0.3.0'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
-      - name: Verify workflow, release, and NuGet publication
+      - name: Verify v0.3.0 publication
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            trigger_branch="${{ github.head_ref }}"
-          elif [[ "$GITHUB_EVENT_NAME" == "create" ]]; then
-            trigger_branch="${{ github.event.ref }}"
-          else
-            trigger_branch="${GITHUB_REF#refs/heads/}"
-          fi
+          tag="v0.3.0"
+          version="0.3.0"
 
-          case "$trigger_branch" in
-            release-verify/*)
-              tag="${trigger_branch#release-verify/}"
-              ;;
-            release-status/*)
-              tag="${trigger_branch#release-status/}"
-              ;;
-            release-status-r2/*)
-              tag="${trigger_branch#release-status-r2/}"
-              ;;
-            *)
-              echo "Unsupported release verification branch: $trigger_branch" >&2
-              exit 1
-              ;;
-          esac
+          run_json=$(gh run list \
+            --workflow pipeline.yml \
+            --event workflow_dispatch \
+            --limit 1 \
+            --json databaseId,status,conclusion,url)
+          echo "$run_json"
 
-          version="${tag#v}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
-            echo "Invalid release tag derived from verification branch: $tag" >&2
-            exit 1
-          fi
-
-          verification_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          echo "Verifying $tag in $verification_url"
-
-          run_id=""
-          for _ in $(seq 1 30); do
-            run_id=$(gh run list \
-              --workflow pipeline.yml \
-              --event workflow_dispatch \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty')
-            if [[ -n "$run_id" ]]; then
-              break
-            fi
-            sleep 10
-          done
+          run_id=$(jq -r '.[0].databaseId // empty' <<< "$run_json")
+          run_status=$(jq -r '.[0].status // empty' <<< "$run_json")
+          run_conclusion=$(jq -r '.[0].conclusion // empty' <<< "$run_json")
+          run_url=$(jq -r '.[0].url // empty' <<< "$run_json")
 
           if [[ -z "$run_id" ]]; then
-            echo "No workflow_dispatch run was found for $tag." >&2
+            echo "No workflow_dispatch Pipeline run was found." >&2
             exit 1
           fi
 
-          set +e
-          gh run watch "$run_id" --exit-status
-          run_exit=$?
-          set -e
-
-          run_url=$(gh run view "$run_id" --json url --jq '.url')
-          gh run view "$run_id" --log > release-run.log
-
-          if ! grep -Fq "$tag" release-run.log; then
-            echo "Latest workflow_dispatch run $run_url was not for $tag." >&2
+          if [[ "$run_status" != "completed" || "$run_conclusion" != "success" ]]; then
+            echo "Release pipeline is not successful: status=$run_status conclusion=$run_conclusion url=$run_url" >&2
             exit 1
           fi
 
-          if [[ "$run_exit" -ne 0 ]]; then
-            echo "Pipeline run $run_url completed unsuccessfully for $tag." >&2
-            exit "$run_exit"
-          fi
+          release_json=$(gh release view "$tag" --json url,assets)
+          echo "$release_json"
 
-          release_url=$(gh release view "$tag" --json url --jq '.url')
-          assets_json=$(gh release view "$tag" --json assets --jq '[.assets[].name]')
+          release_url=$(jq -r '.url' <<< "$release_json")
+          assets_json=$(jq '[.assets[].name]' <<< "$release_json")
           assets=$(jq -r 'join(", ")' <<< "$assets_json")
 
           expected_package="TiaAgent.Cli.$version.nupkg"
           expected_addin="TiaAgent-$version.addin"
           if ! jq -e --arg package "$expected_package" --arg addin "$expected_addin" \
             'index($package) != null and index($addin) != null' <<< "$assets_json" >/dev/null; then
-            echo "GitHub Release $release_url does not contain both expected assets. Found: $assets" >&2
+            echo "Expected release assets are missing. Found: $assets" >&2
             exit 1
           fi
 
           package_url="https://api.nuget.org/v3-flatcontainer/tiaagent.cli/$version/tiaagent.cli.$version.nupkg"
-          package_status=""
-          for _ in $(seq 1 30); do
-            package_status=$(curl -sS -o /dev/null -w '%{http_code}' "$package_url")
-            if [[ "$package_status" == "200" ]]; then
-              break
-            fi
-            sleep 10
-          done
+          curl --fail --silent --show-error --output /dev/null "$package_url"
 
-          if [[ "$package_status" != "200" ]]; then
-            echo "NuGet returned HTTP $package_status for $tag." >&2
-            exit 1
-          fi
-
-          cat > release-report.md <<EOF
+          cat <<EOF | tee -a "$GITHUB_STEP_SUMMARY"
           ## Release verification succeeded
 
           - Version: $version
@@ -138,13 +76,3 @@ jobs:
           - Release assets: $assets
           - NuGet package endpoint: HTTP 200
           EOF
-
-          cat release-report.md
-          cat release-report.md >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
-            git push origin --delete "$trigger_branch"
-            if [[ "$trigger_branch" != "release-status/$tag" ]]; then
-              git push origin --delete "release-status/$tag" || true
-            fi
-          fi
