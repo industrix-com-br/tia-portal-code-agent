@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - .github/workflows/release-verification.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .release/v0.3.1-verify
 
 permissions:
   actions: read
@@ -46,7 +51,7 @@ jobs:
             | map("- [\(.name) #\(.run_number)](\(.html_url)): event=\(.event), status=\(.status), conclusion=\(.conclusion // "pending"), created=\(.created_at)")
             | join("\n")
           ' <<< "$recent_runs")"
-          gh pr comment "$REPORT_PR" --body "## ${TAG} workflow snapshot
+          gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "## ${TAG} workflow snapshot
 
 ${run_snapshot}"
 
@@ -73,7 +78,7 @@ ${run_snapshot}"
           done
 
           if [[ "$verified" != "true" ]]; then
-            gh pr comment "$REPORT_PR" --body "Release verification for ${TAG} timed out before the GitHub Release assets and NuGet package were both available."
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release verification for ${TAG} timed out before the GitHub Release assets and NuGet package were both available."
             exit 1
           fi
 
@@ -92,7 +97,7 @@ ${run_snapshot}"
           ' <<< "$runs_json")"
 
           if [[ -z "$pipeline_record" ]]; then
-            gh pr comment "$REPORT_PR" --body "Release verification found ${TAG}, its expected assets, and NuGet publication, but could not correlate a successful official Pipeline run."
+            gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "Release verification found ${TAG}, its expected assets, and NuGet publication, but could not correlate a successful official Pipeline run."
             exit 1
           fi
 
@@ -108,7 +113,7 @@ ${run_snapshot}"
           EOF
           )"
 
-          gh pr comment "$REPORT_PR" --body "$report"
+          gh pr comment "$REPORT_PR" --repo "$GITHUB_REPOSITORY" --body "$report"
 
           echo "Pipeline run: $pipeline_id $pipeline_url"
           echo "GitHub Release: $release_url"
