@@ -1,0 +1,22 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+    <FontFamily x:Key="FontFamily.Ui">Segoe UI</FontFamily>
+    <FontFamily x:Key="FontFamily.Monospace">Consolas</FontFamily>
+
+    <sys:Double x:Key="FontSize.Caption">11</sys:Double>
+    <sys:Double x:Key="FontSize.Small">12</sys:Double>
+    <sys:Double x:Key="FontSize.Body">13.5</sys:Double>
+    <sys:Double x:Key="FontSize.SectionTitle">14.5</sys:Double>
+    <sys:Double x:Key="FontSize.WindowTitle">16</sys:Double>
+
+    <Thickness x:Key="Spacing.Window">10</Thickness>
+    <Thickness x:Key="Spacing.Header">16,10</Thickness>
+    <Thickness x:Key="Spacing.Status">14,7</Thickness>
+    <Thickness x:Key="Spacing.Content">20</Thickness>
+    <Thickness x:Key="Spacing.CompactButton">10,5</Thickness>
+    <Thickness x:Key="Spacing.StandardButton">12,6</Thickness>
+
+    <CornerRadius x:Key="CornerRadius.Panel">2</CornerRadius>
+    <CornerRadius x:Key="CornerRadius.Control">2</CornerRadius>
+</ResourceDictionary>
