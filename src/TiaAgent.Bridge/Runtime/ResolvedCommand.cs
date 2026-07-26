@@ -27,11 +27,26 @@ internal sealed class ResolvedCommand
     public string ResolvedTargetPath { get; init; } = "";
 
     /// <summary>
-    /// Composes the full argument string by joining wrapper arguments, target, and extra arguments.
+    /// Composes the complete argument string for the selected process wrapper.
     /// The prompt is NOT included here — it is always transported via stdin.
     /// </summary>
     public string ComposeArguments(string extraArguments)
     {
+        if (Wrapper == ProcessWrapper.Cmd)
+        {
+            // cmd.exe /s /c has special quote-stripping rules. When the target
+            // path is quoted but the complete command is not, cmd may treat a
+            // fragment such as `claude.cmd" -p "Process` as the executable.
+            // The canonical form is:
+            //   cmd.exe /d /s /c ""C:\path\tool.cmd" arguments"
+            var target = $"\"{ResolvedTargetPath}\"";
+            var command = string.IsNullOrWhiteSpace(extraArguments)
+                ? target
+                : $"{target} {extraArguments}";
+
+            return $"/d /s /c \"{command}\"";
+        }
+
         var parts = new List<string>();
         parts.AddRange(Arguments);
         if (!string.IsNullOrEmpty(extraArguments))
@@ -93,7 +108,7 @@ internal static class CommandResolver
             ".cmd" or ".bat" => new ResolvedCommand
             {
                 FileName = "cmd.exe",
-                Arguments = new[] { "/d", "/s", "/c", $"\"{executable}\"" },
+                Arguments = new[] { "/d", "/s", "/c" },
                 Wrapper = ProcessWrapper.Cmd,
                 ResolvedTargetPath = executable
             },
@@ -144,7 +159,7 @@ internal static class CommandResolver
             return new ResolvedCommand
             {
                 FileName = "cmd.exe",
-                Arguments = new[] { "/d", "/s", "/c", $"\"{cmdPath}\"" },
+                Arguments = new[] { "/d", "/s", "/c" },
                 Wrapper = ProcessWrapper.Cmd,
                 ResolvedTargetPath = cmdPath
             };
@@ -154,7 +169,7 @@ internal static class CommandResolver
             return new ResolvedCommand
             {
                 FileName = "cmd.exe",
-                Arguments = new[] { "/d", "/s", "/c", $"\"{batPath}\"" },
+                Arguments = new[] { "/d", "/s", "/c" },
                 Wrapper = ProcessWrapper.Cmd,
                 ResolvedTargetPath = batPath
             };
