@@ -42,7 +42,10 @@ internal sealed class ResolvedCommand
             if (!string.IsNullOrWhiteSpace(extraArguments))
                 command += " " + extraArguments;
 
-            return $"/d /s /c \"{command}\"";
+            var wrapperArguments = string.Join(" ", Arguments);
+            return string.IsNullOrWhiteSpace(wrapperArguments)
+                ? $"\"{command}\""
+                : $"{wrapperArguments} \"{command}\"";
         }
 
         var parts = new List<string>();
