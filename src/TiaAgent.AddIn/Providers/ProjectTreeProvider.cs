@@ -8,7 +8,6 @@ using Siemens.Engineering.AddIn.Menu;
 using TiaAgent.AddIn.Diagnostics;
 using TiaAgent.AddIn.Ui;
 using TiaAgent.Contracts.Bridge;
-using TiaAgent.Contracts.Diagnostics;
 
 namespace TiaAgent.AddIn.Providers;
 
@@ -20,25 +19,14 @@ public sealed class ProjectTreeProvider : ProjectTreeAddInProvider
     {
         _tiaPortal = tiaPortal;
 
-        // Logger startup must never prevent Add-In loading.
-        // AddInLogger.Startup() is itself best-effort, but this is an additional
-        // safety boundary in case of TypeInitializationException or unexpected failures.
         try
         {
             AddInLogger.Startup();
-        }
-        catch
-        {
-            // Intentionally empty: logger failure must not break the Add-In.
-        }
-
-        try
-        {
             AddInLogger.Info("ProjectTreeProvider initialized.");
         }
         catch
         {
-            // Same principle: logging is best-effort.
+            // Diagnostics must never prevent Add-In loading.
         }
     }
 
@@ -78,103 +66,117 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
     private async void HandleActionAsync(string action, MenuSelectionProvider<IEngineeringObject> selection)
     {
         AddInLogger.Info($"Action triggered: {action}");
-        AddInLogger.Info($"Current thread: {Environment.CurrentManagedThreadId}, " +
-                         $"apartment: {Thread.CurrentThread.GetApartmentState()}");
+        AddInLogger.Info(
+            $"Current thread: {Environment.CurrentManagedThreadId}, apartment: {Thread.CurrentThread.GetApartmentState()}");
+
+        string? acceptedTaskId = null;
 
         try
         {
-            var objects = selection.GetSelection();
-            var enumerator = objects.GetEnumerator();
-            if (!enumerator.MoveNext())
+            var selectedObject = GetSelectedObject(selection);
+            if (selectedObject == null)
             {
-                AddInLogger.Warn("No object selected.");
-                AssistantPanelFactory.ShowWarning("No object selected.");
                 return;
             }
 
-            var selectedObj = enumerator.Current as IEngineeringObject;
-            if (selectedObj == null)
-            {
-                AddInLogger.Warn("Selected object is not a TIA engineering object.");
-                AssistantPanelFactory.ShowWarning("Selected object is not a TIA engineering object.");
-                return;
-            }
-
-            // Capture selection using ToString() — no reflection (avoids VerificationException)
-            var selectionInfo = selectedObj.ToString() ?? "Unknown";
-            var typeName = selectedObj.GetType().Name;
+            var selectionInfo = selectedObject.ToString() ?? "Unknown";
+            var typeName = selectedObject.GetType().Name;
             var correlationId = $"tia-{Guid.NewGuid():N}";
 
-            AddInLogger.Info($"Selection captured: {selectionInfo} (type: {typeName}, correlation: {correlationId})");
+            AddInLogger.Info(
+                $"Selection captured: {selectionInfo} (type: {typeName}, correlation: {correlationId})");
 
-            // Capture the source before leaving the TIA Portal callback thread.
-            var selectionSnapshot = SelectionSnapshotFactory.Create(selectedObj);
-            if (selectionSnapshot?.Source != null)
-            {
-                AddInLogger.Info($"Source extracted: {selectionSnapshot.Source.Length} chars (format: {selectionSnapshot.SourceFormat})");
-            }
-            else
-            {
-                AddInLogger.Warn($"No source extracted for {selectionInfo}");
-            }
+            var selectionSnapshot = SelectionSnapshotFactory.Create(selectedObject);
+            LogSourceExtraction(selectionInfo, selectionSnapshot);
 
-            var createResult = await AssistantExecutionWindowFactory.TryCreateAsync(
+            var request = CreateBridgeRequest(
+                action,
+                selectionInfo,
+                typeName,
+                correlationId,
+                selectionSnapshot);
+
+            AddInLogger.Info($"Starting Bridge task: agentId={request.AgentId}, action={action}");
+            var accepted = await AddInServices.BridgeClient
+                .StartTaskAsync(request, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            acceptedTaskId = accepted.TaskId;
+            AddInLogger.Info(
+                $"Bridge task accepted: taskId={accepted.TaskId}, status={accepted.Status}");
+
+            var objectName = string.IsNullOrWhiteSpace(request.Selection.Name)
+                ? selectionInfo
+                : request.Selection.Name;
+            var objectType = string.IsNullOrWhiteSpace(request.Selection.ObjectType)
+                ? typeName
+                : request.Selection.ObjectType;
+
+            var launchResult = ResponseCenterLauncher.Launch(
+                new ResponseCenterLaunchRequest(
+                    accepted.TaskId,
                     action,
+                    objectName,
+                    objectType,
+                    request.Selection.PlcName,
+                    request.Project.Name,
                     correlationId,
-                    selectionInfo,
-                    windowReadyTimeout: TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                    accepted.Status,
+                    AddInServices.Config.BridgeBaseUrl));
 
-            if (createResult == null || createResult.Value.view == null)
+            if (launchResult.Success)
             {
-                AddInLogger.Error("The WPF execution window could not be created.");
-                AssistantPanelFactory.ShowError(
-                    "The AI Code Agent window could not be created. Check the Add-In logs for details.");
                 return;
             }
 
-            var executionView = createResult.Value.view;
+            await CancelAcceptedTaskAsync(accepted.TaskId).ConfigureAwait(false);
+            acceptedTaskId = null;
 
-            var coordinator = new AssistantExecutionCoordinator();
-            await coordinator.ExecuteAsync(
-                executionView,
-                cancellationToken => ExecuteViaBridgeAsync(
-                    action,
-                    selectionInfo,
-                    typeName,
-                    correlationId,
-                    selectionSnapshot,
-                    cancellationToken),
-                FormatUserErrorMessage,
-                onExecutionStarting: () => AddInLogger.Info("Agent request started."),
-                onExecutionCompleted: result =>
-                {
-                    AddInLogger.Info($"Agent response received. Response length: {result.Markdown.Length} chars; " +
-                                     $"sha256={TextPayloadDiagnostics.ComputeUtf8Sha256(result.Markdown)}");
-                },
-                onExecutionFailed: ex =>
-                {
-                    var diagnostics = FormatExceptionDiagnostics(ex, action, correlationId);
-                    AddInLogger.Error(diagnostics, null);
-                }).ConfigureAwait(false);
+            AddInDialogService.ShowError(
+                "The Agent task was created, but the Response Center could not be opened. " +
+                (launchResult.ErrorMessage ?? "Reinstall or update TIA Agent and try again."));
         }
         catch (Exception ex)
         {
+            if (!string.IsNullOrWhiteSpace(acceptedTaskId))
+            {
+                await CancelAcceptedTaskAsync(acceptedTaskId).ConfigureAwait(false);
+            }
+
             AddInLogger.Error($"Error handling menu action '{action}'", ex);
-            AssistantPanelFactory.ShowError($"Error: {ex.Message}");
+            AddInDialogService.ShowError(FormatUserErrorMessage(ex));
         }
     }
 
-    private async Task<AssistantExecutionResult> ExecuteViaBridgeAsync(
+    private static IEngineeringObject? GetSelectedObject(
+        MenuSelectionProvider<IEngineeringObject> selection)
+    {
+        var objects = selection.GetSelection();
+        var enumerator = objects.GetEnumerator();
+        if (!enumerator.MoveNext())
+        {
+            AddInLogger.Warn("No object selected.");
+            AddInDialogService.ShowWarning("No object selected.");
+            return null;
+        }
+
+        if (enumerator.Current is not IEngineeringObject selectedObject)
+        {
+            AddInLogger.Warn("Selected object is not a TIA engineering object.");
+            AddInDialogService.ShowWarning("Selected object is not a TIA engineering object.");
+            return null;
+        }
+
+        return selectedObject;
+    }
+
+    private static BridgeTaskRequest CreateBridgeRequest(
         string action,
         string selectionInfo,
         string typeName,
         string correlationId,
-        SelectionSnapshot? selectionSnapshot,
-        CancellationToken cancellationToken)
+        SelectionSnapshot? selectionSnapshot)
     {
-        AddInLogger.Info($"Bridge execution started for '{action}' on thread " +
-                         $"{Environment.CurrentManagedThreadId}");
-
         var agentId = action switch
         {
             "explain" => "tia-explain",
@@ -191,18 +193,17 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
             _ => "analyze this object"
         };
 
-        // Use the pre-extracted selection snapshot if provided, otherwise create a basic one.
-        var selection = selectionSnapshot ?? new SelectionSnapshot
+        var capturedSelection = selectionSnapshot ?? new SelectionSnapshot
         {
             Name = selectionInfo,
             ObjectType = typeName,
-            RuntimeType = "",
-            PlcName = "",
+            RuntimeType = string.Empty,
+            PlcName = string.Empty,
             TiaPath = selectionInfo,
-            Language = ""
+            Language = string.Empty
         };
 
-        var request = new BridgeTaskRequest
+        return new BridgeTaskRequest
         {
             ContractVersion = "1.0",
             CorrelationId = correlationId,
@@ -218,123 +219,59 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
             {
                 Id = "current",
                 Name = "Current Project",
-                Path = ""
+                Path = string.Empty
             },
-            Selection = selection,
-            UserMessage = $"The user selected object \"{selectionInfo}\" of type \"{typeName}\" in TIA Portal. Please {actionDescription}."
+            Selection = capturedSelection,
+            UserMessage =
+                $"The user selected object \"{selectionInfo}\" of type \"{typeName}\" in TIA Portal. " +
+                $"Please {actionDescription}."
         };
-
-        if (selection.Source != null)
-        {
-            AddInLogger.Info($"Request includes source: {selection.Source.Length} chars, format: {selection.SourceFormat}");
-        }
-        else
-        {
-            AddInLogger.Warn("Request does not include source code.");
-        }
-
-        AddInLogger.Info($"Starting Bridge task: agentId={agentId}, action={action}");
-
-        var accepted = await AddInServices.BridgeClient
-            .StartTaskAsync(request, cancellationToken)
-            .ConfigureAwait(false);
-
-        AddInLogger.Info($"Bridge task accepted: taskId={accepted.TaskId}");
-
-        var config = AddInServices.Config;
-        var timeout = TimeSpan.FromSeconds(config.TaskTimeoutSeconds);
-        var startTime = DateTime.UtcNow;
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (DateTime.UtcNow - startTime > timeout)
-            {
-                AddInLogger.Warn($"Task timed out after {config.TaskTimeoutSeconds}s");
-                throw new TimeoutException("Task timed out waiting for the Agent Code response.");
-            }
-
-            await Task.Delay(config.PollingIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
-
-            var status = await AddInServices.BridgeClient
-                .GetTaskAsync(accepted.TaskId, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (status.Status == BridgeTaskStatusValues.Completed)
-            {
-                var response = status.Response ?? "No response received.";
-                AddInLogger.Info($"Task completed. Response length: {response.Length} chars");
-                return new AssistantExecutionResult(response, status.RuntimeId);
-            }
-
-            if (status.Status == BridgeTaskStatusValues.Failed)
-            {
-                var errorMsg = status.Error?.Message ?? status.Message ?? "Unknown error";
-                AddInLogger.Error($"Task failed: {errorMsg}");
-                throw new InvalidOperationException(errorMsg);
-            }
-
-            if (status.Status == BridgeTaskStatusValues.Cancelled)
-            {
-                AddInLogger.Info("Task was cancelled.");
-                throw new OperationCanceledException("Task was cancelled.", cancellationToken);
-            }
-        }
     }
 
-    /// <summary>
-    /// Formats comprehensive diagnostic information for an exception.
-    /// Includes exception type, message, stack trace, inner exceptions,
-    /// assembly info, and correlation ID for post-mortem analysis.
-    /// </summary>
-    private static string FormatExceptionDiagnostics(Exception ex, string action, string correlationId)
+    private static void LogSourceExtraction(string selectionInfo, SelectionSnapshot? selectionSnapshot)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"Bridge execution failed for '{action}' (correlation: {correlationId})");
-        sb.AppendLine($"Exception type: {ex.GetType().FullName}");
-        sb.AppendLine($"Message: {ex.Message}");
-        sb.AppendLine($"Thread: {Environment.CurrentManagedThreadId}, apartment: {Thread.CurrentThread.GetApartmentState()}");
-        sb.AppendLine($".NET Runtime: {System.Runtime.InteropServices.RuntimeEnvironment.GetSystemVersion()}");
-        sb.AppendLine($"CLR Version: {Environment.Version}");
-
-        var inner = ex.InnerException;
-        var depth = 0;
-        while (inner != null && depth < 5)
+        if (selectionSnapshot?.Source != null)
         {
-            sb.AppendLine($"Inner exception [{depth}]: {inner.GetType().FullName}: {inner.Message}");
-            inner = inner.InnerException;
-            depth++;
+            AddInLogger.Info(
+                $"Source extracted: {selectionSnapshot.Source.Length} chars " +
+                $"(format: {selectionSnapshot.SourceFormat})");
+            return;
         }
 
-        if (!string.IsNullOrEmpty(ex.StackTrace))
-        {
-            sb.AppendLine($"Stack trace:\n{ex.StackTrace}");
-        }
-
-        return sb.ToString();
+        AddInLogger.Warn($"No source extracted for {selectionInfo}");
     }
 
-    /// <summary>
-    /// Formats a user-friendly error message. Preserves the technical cause
-    /// for known exception types while showing a clear message for unknowns.
-    /// </summary>
+    private static async Task CancelAcceptedTaskAsync(string taskId)
+    {
+        try
+        {
+            await AddInServices.BridgeClient
+                .CancelTaskAsync(taskId, CancellationToken.None)
+                .ConfigureAwait(false);
+            AddInLogger.Info($"Cancelled Bridge task after Response Center startup failure: {taskId}");
+        }
+        catch (Exception cancelException)
+        {
+            AddInLogger.Error(
+                $"Failed to cancel Bridge task after Response Center startup failure: {taskId}",
+                cancelException);
+        }
+    }
+
     private static string FormatUserErrorMessage(Exception ex)
     {
         if (ex is System.Security.VerificationException)
         {
-            return "The Add-In encountered a security sandbox restriction. "
-                 + "This usually means a dependency requires permissions not available "
-                 + "in TIA Portal's partial-trust environment. Check the Add-In logs for details.";
+            return "The Add-In encountered a TIA Portal security sandbox restriction. " +
+                   "Check the Add-In logs for details.";
         }
 
-        if (ex is System.Security.SecurityException secEx)
+        if (ex is System.Security.SecurityException securityException)
         {
-            return $"A security permission was denied: {secEx.Message}. "
-                 + "The Add-In may need additional permissions in Config.xml.";
+            return "A security permission was denied: " + securityException.Message;
         }
 
-        return "Failed to communicate with AI assistant: " + ex.Message;
+        return "Failed to start the AI assistant: " + ex.Message;
     }
 }
 #endif
