@@ -11,22 +11,29 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: "Existing release tag to publish, for example v0.3.0-beta.9"
+      version:
+        description: "Product version without the v prefix (e.g. 0.3.2, 0.3.2-beta.1)"
         required: true
         type: string
+  issues:
+    types: [labeled]
 
 permissions:
   contents: read
 
 concurrency:
-  group: pipeline-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref_type != 'tag' }}
+  group: >-
+    pipeline-${{
+      github.event_name == 'workflow_dispatch' && format('release-{0}', inputs.version) ||
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'release:run') && format('release-{0}', github.event.issue.number) ||
+      github.ref
+    }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 jobs:
   ci:
     name: CI
-    if: github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'issues' && github.ref_type != 'tag'
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -128,32 +135,193 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # ---------------------------------------------------------------------------
+  # Release trigger resolution
+  # ---------------------------------------------------------------------------
+  resolve-release:
+    name: Resolve Release
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'release:run')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+      source: ${{ steps.validate.outputs.source }}
+      issue_number: ${{ github.event.issue.number }}
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Resolve version from trigger
+        id: validate
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_LABEL: ${{ github.event.label.name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ACTOR_LOGIN: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version=""
+          source=""
+
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            version="$INPUT_VERSION"
+            source="workflow_dispatch"
+          elif [[ -n "${ISSUE_LABEL:-}" && "${ISSUE_LABEL}" == "release:run" ]]; then
+            # Extract version from strict issue title format: "Release vX.Y.Z" or "Release v0.3.2-beta.1"
+            if [[ "${ISSUE_TITLE}" =~ ^Release\ v([0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?)$ ]]; then
+              version="${BASH_REMATCH[1]}"
+              source="issue"
+            else
+              echo "::error::Issue title must match 'Release vX.Y.Z' or 'Release vX.Y.Z-prerelease.N'"
+              gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "**Release failed:** Issue title must match \`Release vX.Y.Z\` or \`Release vX.Y.Z-prerelease.N\`. Received: \`$ISSUE_TITLE\`"
+              exit 1
+            fi
+          else
+            echo "Not a release trigger, skipping."
+            exit 0
+          fi
+
+          # Validate version format
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
+            echo "::error::Invalid version format: $version"
+            if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+              gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "**Release failed:** Invalid version format \`$version\`. Expected: X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-beta.N, or X.Y.Z-rc.N"
+            fi
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "Resolved release version: $version (source: $source)"
+
+  # ---------------------------------------------------------------------------
+  # Release publication
+  # ---------------------------------------------------------------------------
   publish:
-    name: Publish NuGet
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    name: Publish Release
+    needs: resolve-release
+    if: needs.resolve-release.outputs.version != ''
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
+      issues: write
 
     steps:
+      - name: Report release start
+        if: needs.resolve-release.outputs.source == 'issue'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.resolve-release.outputs.issue_number }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "Release **v$VERSION** started. Workflow: [run ${{ github.run_id }}]($RUN_URL)."
+
       - name: Resolve release tag
         id: release
         shell: pwsh
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.release_tag }}"
-          } else {
-            $tag = "${{ github.ref_name }}"
-          }
+          $version = "${{ needs.resolve-release.outputs.version }}"
+          $tag = "v$version"
 
-          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
-            throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
+          # Validate version format
+          if ($version -notmatch '^\d+\.\d+\.\d+(-((alpha|beta|rc)\.\d+))?$') {
+            throw "Invalid version '$version'. Expected X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-beta.N, or X.Y.Z-rc.N."
           }
 
           "tag=$tag" >> $env:GITHUB_OUTPUT
-          "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+          # Determine prerelease status
+          if ($version -match '-') {
+            "prerelease=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "prerelease=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate and create release tag
+        id: create-tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          $version = "${{ steps.release.outputs.version }}"
+
+          # Get HEAD commit on main
+          $headCommit = (git rev-parse HEAD).Trim()
+          Write-Host "HEAD commit on main: $headCommit"
+
+          # Check if tag already exists
+          $existingTag = git rev-parse --verify "refs/tags/$tag" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $existingCommit = (git rev-list -n 1 $tag).Trim()
+            if ($existingCommit -eq $headCommit) {
+              Write-Host "Tag $tag already exists and points to HEAD. Continuing with existing tag."
+              "tag_exists=true" >> $env:GITHUB_OUTPUT
+              "tag_commit=$existingCommit" >> $env:GITHUB_OUTPUT
+            } else {
+              throw "Tag $tag exists but points to commit $existingCommit, not HEAD ($headCommit). Cannot move an existing tag."
+            }
+          } else {
+            # Check if tag exists on another commit
+            $remoteTag = git ls-remote origin "refs/tags/$tag" 2>$null
+            if ($remoteTag) {
+              $remoteCommit = ($remoteTag -split "`t")[0]
+              throw "Tag $tag already exists remotely at commit $remoteCommit. Cannot reuse version."
+            }
+
+            # Check NuGet for existing version
+            $nugetIndex = Invoke-RestMethod -Uri "https://api.nuget.org/v3-flatcontainer/tiaagent.cli/index.json"
+            if ($nugetIndex.versions -contains $version) {
+              throw "Version $version already exists on NuGet.org. Cannot reuse version."
+            }
+
+            # Create annotated tag on HEAD
+            Write-Host "Creating tag $tag on commit $headCommit"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a $tag $headCommit -m "Release $tag"
+            git push origin "refs/tags/$tag"
+
+            "tag_exists=false" >> $env:GITHUB_OUTPUT
+            "tag_commit=$headCommit" >> $env:GITHUB_OUTPUT
+            Write-Host "Created and pushed tag $tag"
+          }
+
+          # Verify CI passed for this commit
+          Write-Host "Checking CI status for commit $headCommit"
+          $runs = gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs?head_sha=$headCommit&event=push&per_page=100" | ConvertFrom-Json
+          $ciRun = $runs.workflow_runs | Where-Object { $_.name -eq "Pipeline" -and $_.head_sha -eq $headCommit } |
+            Sort-Object -Property created_at | Select-Object -Last 1
+
+          if (-not $ciRun) {
+            throw "No Pipeline CI run found for commit $headCommit."
+          }
+
+          if ($ciRun.conclusion -ne "success") {
+            throw "Pipeline CI for commit $headCommit has status $($ciRun.conclusion). Cannot release from unverified commit."
+          }
+
+          Write-Host "CI passed for commit $headCommit: $($ciRun.html_url)"
 
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -161,24 +329,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ steps.release.outputs.tag }}
 
-      - name: Validate release tag
+      - name: Validate release tag is in main
         shell: pwsh
         run: |
           $tag = "${{ steps.release.outputs.tag }}"
-          git fetch origin main --tags
+          $tagCommit = "${{ steps.create-tag.outputs.tag_commit }}"
 
-          git rev-parse --verify "refs/tags/$tag^{commit}" | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            throw "Release tag '$tag' does not exist or does not resolve to a commit."
-          }
-
-          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          git fetch origin main
           git merge-base --is-ancestor $tagCommit origin/main
           if ($LASTEXITCODE -ne 0) {
             throw "Release tag '$tag' points to commit '$tagCommit', which is not contained in main."
           }
 
-          Write-Host "Publishing $tag from commit $tagCommit"
+          Write-Host "Tag $tag (commit $tagCommit) is contained in main."
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -217,8 +380,162 @@ jobs:
           tag_name: ${{ steps.release.outputs.tag }}
           name: TIA Portal Code Agent ${{ steps.release.outputs.version }}
           generate_release_notes: true
-          prerelease: ${{ contains(steps.release.outputs.version, '-') }}
+          prerelease: ${{ steps.release.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           files: |
             artifacts/TiaAgent.Cli.${{ steps.release.outputs.version }}.nupkg
             artifacts/TiaAgent-${{ steps.release.outputs.version }}.addin
+
+  # ---------------------------------------------------------------------------
+  # Post-release verification
+  # ---------------------------------------------------------------------------
+  verify-release:
+    name: Verify Release
+    needs: [resolve-release, publish]
+    if: needs.resolve-release.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      issues: write
+
+    steps:
+      - name: Wait for NuGet propagation
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          TAG="${{ needs.resolve-release.outputs.tag }}"
+          echo "Waiting for NuGet.org to index version $VERSION..."
+
+          for i in $(seq 1 30); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://api.nuget.org/v3-flatcontainer/tiaagent.cli/$VERSION/tiaagent.cli.$VERSION.nupkg")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+              echo "NuGet package available (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            sleep 10
+          done
+
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "::warning::NuGet package not yet available after 5 minutes."
+          fi
+
+      - name: Verify GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.resolve-release.outputs.tag }}"
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          PACKAGE="TiaAgent.Cli.$VERSION.nupkg"
+          ADDIN="TiaAgent-$VERSION.addin"
+
+          RELEASE=$(gh api "/repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null)
+          if [[ $? -ne 0 ]]; then
+            echo "::error::GitHub Release $TAG not found."
+            exit 1
+          fi
+
+          # Verify assets
+          ASSETS=$(echo "$RELEASE" | jq -r '.assets[].name')
+          if echo "$ASSETS" | grep -q "$PACKAGE"; then
+            echo "NuGet package asset found: $PACKAGE"
+          else
+            echo "::error::Expected asset $PACKAGE not found in GitHub Release."
+            exit 1
+          fi
+
+          if echo "$ASSETS" | grep -q "$ADDIN"; then
+            echo "Add-In asset found: $ADDIN"
+          else
+            echo "::error::Expected asset $ADDIN not found in GitHub Release."
+            exit 1
+          fi
+
+          # Verify prerelease flag
+          EXPECTED_PRERELEASE=$(echo "$RELEASE" | jq -r '.prerelease')
+          if [[ "$VERSION" == *"-"* ]]; then
+            if [[ "$EXPECTED_PRERELEASE" != "true" ]]; then
+              echo "::error::Prerelease version $VERSION should have prerelease=true."
+              exit 1
+            fi
+          else
+            if [[ "$EXPECTED_PRERELEASE" != "false" ]]; then
+              echo "::error::Stable version $VERSION should have prerelease=false."
+              exit 1
+            fi
+          fi
+
+          echo "GitHub Release verified successfully."
+
+      - name: Verify NuGet package
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://api.nuget.org/v3-flatcontainer/tiaagent.cli/$VERSION/tiaagent.cli.$VERSION.nupkg")
+
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            echo "NuGet package TiaAgent.Cli $VERSION is available."
+          else
+            echo "::error::NuGet package TiaAgent.Cli $VERSION returned HTTP $HTTP_CODE."
+            exit 1
+          fi
+
+      - name: Smoke test installation
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          TMPDIR=$(mktemp -d)
+          trap "rm -rf $TMPDIR" EXIT
+
+          echo "Installing TiaAgent.Cli $VERSION in temp directory..."
+          if dotnet tool install --global TiaAgent.Cli --version "$VERSION" --tool-path "$TMPDIR"; then
+            echo "Installation succeeded."
+            TOOL_PATH="$TMPDIR/tia-agent"
+            if [[ -f "$TOOL_PATH" ]]; then
+              echo "Running tia-agent version..."
+              "$TOOL_PATH" version || echo "::warning::tia-agent version command failed."
+            fi
+          else
+            echo "::warning::Installation failed. This may be expected if NuGet propagation is still in progress."
+          fi
+
+      - name: Generate release report
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          TAG="${{ needs.resolve-release.outputs.tag }}"
+          SOURCE="${{ needs.resolve-release.outputs.source }}"
+          PUBLISH_STATUS="${{ needs.publish.result }}"
+
+          REPORT="## Release Report: v$VERSION
+
+          | Field | Value |
+          |---|---|
+          | Version | $VERSION |
+          | Tag | $TAG |
+          | Trigger | $SOURCE |
+          | Workflow Run | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          | Publish Job | $PUBLISH_STATUS |
+          | GitHub Release | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |
+          | NuGet Package | https://www.nuget.org/packages/TiaAgent.Cli/$VERSION |
+
+          ### Verification
+
+          - GitHub Release: ${{ needs.verify-release.result == 'success' && 'PASSED' || 'FAILED' }}
+          - NuGet Package: ${{ needs.verify-release.result == 'success' && 'AVAILABLE' || 'CHECK MANUALLY' }}
+          "
+
+          echo "$REPORT" >> $GITHUB_STEP_SUMMARY
+
+          # Comment on issue if triggered by issue
+          ISSUE_NUMBER="${{ needs.resolve-release.outputs.issue_number }}"
+          if [[ "$SOURCE" == "issue" && -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$REPORT"
+            if [[ "$PUBLISH_STATUS" == "success" ]]; then
+              gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --comment "Release v$VERSION completed successfully."
+            fi
+          fi

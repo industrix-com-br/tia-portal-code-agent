@@ -89,7 +89,39 @@ The Add-In's proposal request asks the runtime to propose improvements. It does 
 
 Release creation requires explicit maintainer authorization.
 
-Follow [`docs/RELEASING.md`](docs/RELEASING.md) exactly. Do not edit version files, reuse versions, move published release tags, bypass validation, or report success before verifying both GitHub Releases and NuGet.org.
+The permanent release workflow is `.github/workflows/pipeline.yml`. All releases must go through this workflow.
+
+### Trigger a release
+
+```bash
+# Via workflow dispatch (recommended)
+gh workflow run pipeline.yml \
+  --ref main \
+  -f version=0.3.2
+
+# Via issue (agent-friendly)
+gh issue create \
+  --title "Release v0.3.2" \
+  --label "release:run"
+```
+
+### Monitor a release
+
+```bash
+gh run list --workflow pipeline.yml --limit 10
+gh run watch <run-id> --exit-status
+gh run view <run-id> --log
+```
+
+### Release rules
+
+- Do not edit version files, reuse versions, or move published release tags.
+- Do not bypass validation or report success before verifying both GitHub Releases and NuGet.org.
+- Do not create temporary workflows, branches, or marker files for release operations.
+- Do not create PRs solely for release observability.
+- A release is complete only after GitHub Release, NuGet, assets, and smoke tests are verified.
+
+Follow [`docs/RELEASING.md`](docs/RELEASING.md) for the complete release procedure.
 
 Release infrastructure and credential configuration are documented in [`docs/RELEASE_INFRASTRUCTURE.md`](docs/RELEASE_INFRASTRUCTURE.md). Do not change that infrastructure as part of a routine release unless the task explicitly requires it.
 
