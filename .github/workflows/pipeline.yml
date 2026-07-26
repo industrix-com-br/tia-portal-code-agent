@@ -124,7 +124,7 @@ jobs:
 
   publish:
     name: Publish NuGet
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.head_ref == 'release/v0.3.0-beta.7-trigger'
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
     timeout-minutes: 30
     permissions:
@@ -135,6 +135,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event_name == 'pull_request' && '9772a88f397588e757881aa73d89f8638fcff2f9' || github.ref }}
           fetch-depth: 0
 
       - name: Setup .NET
@@ -148,11 +149,27 @@ jobs:
         id: version
         shell: pwsh
         run: |
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request" -and "${{ github.head_ref }}" -eq "release/v0.3.0-beta.7-trigger") {
+            "value=0.3.0-beta.7" >> $env:GITHUB_OUTPUT
+            "tag=v0.3.0-beta.7" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
           $tag = "${{ github.ref_name }}"
           if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
             throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
           }
           "value=$($Matches.version)" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Verify release tag
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if (-not $remoteTag) {
+            throw "Release tag '$tag' does not exist on origin."
+          }
 
       - name: Build release
         shell: pwsh
@@ -181,6 +198,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: 9772a88f397588e757881aa73d89f8638fcff2f9
           name: TIA Portal Code Agent ${{ steps.version.outputs.value }}
           generate_release_notes: true
           prerelease: ${{ contains(steps.version.outputs.value, '-') }}
