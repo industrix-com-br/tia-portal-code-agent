@@ -41,6 +41,41 @@ public class CommandInvocationRegressionTests
     }
 
     [Fact]
+    public async Task CmdWrapper_ExecutesComplexArgumentsAndPipedStdin()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var batchPath = Path.Combine(Path.GetTempPath(), $"tia-stdin-echo-{Guid.NewGuid():N}.cmd");
+        try
+        {
+            await File.WriteAllTextAsync(
+                batchPath,
+                "@echo off\r\necho arg1=%~1\r\necho arg2=%~2\r\nmore\r\n");
+
+            var resolved = CommandResolver.Resolve(batchPath);
+            using var runner = new ProcessRunner(_logger);
+
+            var result = await runner.RunAsync(
+                resolved.FileName,
+                resolved.ComposeArguments("\"value with spaces\" \"C:\\Users\\test\\App Data\\claude-mcp.json\""),
+                workingDirectory: null,
+                timeout: TimeSpan.FromSeconds(15),
+                stdinContent: "payload-áção",
+                cancellationToken: CancellationToken.None);
+
+            result.Success.Should().BeTrue(result.Error);
+            result.StdOut.Should().Contain("arg1=value with spaces");
+            result.StdOut.Should().Contain(@"arg2=C:\Users\test\App Data\claude-mcp.json");
+            result.StdOut.Should().Contain("payload-áção");
+        }
+        finally
+        {
+            try { File.Delete(batchPath); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task ProcessRunner_WhenChildClosesStdin_PreservesExitCodeAndStderr()
     {
         if (!OperatingSystem.IsWindows())
