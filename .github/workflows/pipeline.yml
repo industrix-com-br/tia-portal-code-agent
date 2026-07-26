@@ -9,18 +9,24 @@ on:
       - main
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to publish, for example v0.3.0-beta.9"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: pipeline-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  group: pipeline-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref_type != 'tag' }}
 
 jobs:
   ci:
     name: CI
-    if: github.ref_type != 'tag'
+    if: github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -124,7 +130,7 @@ jobs:
 
   publish:
     name: Publish NuGet
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Windows, x64, tia-v21, release-runner]
     timeout-minutes: 30
     permissions:
@@ -132,10 +138,47 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.release_tag }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+          }
+
+          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
+            throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout release tag
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          git fetch origin main --tags
+
+          git rev-parse --verify "refs/tags/$tag^{commit}" | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tag '$tag' does not exist or does not resolve to a commit."
+          }
+
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tag '$tag' points to commit '$tagCommit', which is not contained in main."
+          }
+
+          Write-Host "Publishing $tag from commit $tagCommit"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -144,23 +187,13 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Extract version
-        id: version
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
-            throw "Invalid release tag '$tag'. Expected vX.Y.Z or vX.Y.Z-alpha.N|beta.N|rc.N."
-          }
-          "value=$($Matches.version)" >> $env:GITHUB_OUTPUT
-
       - name: Build release
         shell: pwsh
         env:
           TIA_SIGNING_CERT_PFX_BASE64: ${{ secrets.TIA_SIGNING_CERT_PFX_BASE64 }}
           TIA_SIGNING_CERT_PASSWORD: ${{ secrets.TIA_SIGNING_CERT_PASSWORD }}
           TIA_SIGNING_CERT_THUMBPRINT: ${{ secrets.TIA_SIGNING_CERT_THUMBPRINT }}
-        run: ./build.ps1 release -Version "${{ steps.version.outputs.value }}"
+        run: ./build.ps1 release -Version "${{ steps.release.outputs.version }}"
 
       - name: Login to NuGet
         id: nuget
@@ -171,7 +204,7 @@ jobs:
       - name: Publish NuGet package
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.value }}"
+          $version = "${{ steps.release.outputs.version }}"
           $package = Get-Item "artifacts/TiaAgent.Cli.$version.nupkg"
           dotnet nuget push $package.FullName `
             --source "https://api.nuget.org/v3/index.json" `
@@ -181,10 +214,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: TIA Portal Code Agent ${{ steps.version.outputs.value }}
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: TIA Portal Code Agent ${{ steps.release.outputs.version }}
           generate_release_notes: true
-          prerelease: ${{ contains(steps.version.outputs.value, '-') }}
+          prerelease: ${{ contains(steps.release.outputs.version, '-') }}
           fail_on_unmatched_files: true
           files: |
-            artifacts/TiaAgent.Cli.${{ steps.version.outputs.value }}.nupkg
-            artifacts/TiaAgent-${{ steps.version.outputs.value }}.addin
+            artifacts/TiaAgent.Cli.${{ steps.release.outputs.version }}.nupkg
+            artifacts/TiaAgent-${{ steps.release.outputs.version }}.addin
