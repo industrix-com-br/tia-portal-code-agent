@@ -6,7 +6,7 @@ namespace TiaAgent.ResponseCenter;
 public static class Strings
 {
     // Window
-    public const string WindowTitle = "AI Code Agent";
+    public const string WindowTitle = "TIA Agent";
 
     // Status labels
     public const string StatusCreated = "Ready";
@@ -26,12 +26,13 @@ public static class Strings
 
     // Buttons
     public const string ButtonCancel = "Cancel";
-    public const string ButtonRetry = "Retry";
+    public const string ButtonRetry = "Try again";
     public const string ButtonCopy = "Copy";
     public const string ButtonCopyAll = "Copy All";
     public const string ButtonClose = "Close";
     public const string ButtonApprove = "Approve";
     public const string ButtonReject = "Reject";
+    public const string ButtonSend = "Send";
 
     // Labels
     public const string LabelAction = "Action:";
@@ -48,6 +49,20 @@ public static class Strings
     public const string ErrorPollingFailed = "Lost contact with the task. Retrying…";
     public const string ErrorGeneric = "An unexpected error occurred.";
     public const string ErrorCopyFailed = "Failed to copy to clipboard.";
+    public const string ErrorTitle = "The request could not be completed.";
+    public const string ErrorMessage = "Agent Code did not return a valid response.";
+
+    // Loading
+    public const string LoadingText = "Analyzing code…";
+    public const string WaitingText = "Waiting for Agent Code";
+
+    // Input
+    public const string InputPlaceholder = "Ask something about the selected code…";
+    public const string CopyResponse = "Copy response";
+
+    // Technical details
+    public const string ViewDetails = "View details";
+    public const string HideDetails = "Hide details";
 
     // Approval
     public const string ApprovalTitle = "Approval Required";
@@ -55,4 +70,9 @@ public static class Strings
 
     // Copy
     public const string CopySuccess = "Copied to clipboard.";
+
+    // Action display mappings
+    public const string ActionExplain = "Explain code";
+    public const string ActionReview = "Review code";
+    public const string ActionPropose = "Propose improvements";
 }

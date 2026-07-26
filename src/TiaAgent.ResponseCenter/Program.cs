@@ -44,7 +44,7 @@ public static class Program
 
             var window = new AgentResponseWindow(viewModel)
             {
-                Title = $"AI Code Agent — {context.ActionDisplay}"
+                Title = $"TIA Agent — {context.ActionDisplay}"
             };
 
             // Start monitoring and show window
@@ -57,8 +57,8 @@ public static class Program
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"Failed to start Agent Response Center:\n\n{ex.Message}",
-                "AI Code Agent — Error",
+                $"Failed to start TIA Agent:\n\n{ex.Message}",
+                "TIA Agent — Error",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             return 1;
@@ -157,7 +157,7 @@ public static class Program
             "  [--correlation-id <id>]\n" +
             "  [--initial-status <status>]\n" +
             "  [--initial-stage <stage>]",
-            "AI Code Agent — Usage",
+            "TIA Agent — Usage",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
     }

@@ -120,3 +120,41 @@ public sealed class StringToVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>
+/// Converts an action ID to a user-friendly display string.
+/// </summary>
+[ValueConversion(typeof(string), typeof(string))]
+public sealed class ActionToDisplayConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is string action ? action.ToLowerInvariant() switch
+        {
+            "explain" => Strings.ActionExplain,
+            "review" => Strings.ActionReview,
+            "propose" => Strings.ActionPropose,
+            _ => $"Action: {action}"
+        } : value?.ToString() ?? "";
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
+/// Inverts a boolean value.
+/// </summary>
+[ValueConversion(typeof(bool), typeof(bool))]
+public sealed class BooleanInverterConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is bool b ? !b : value;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is bool b ? !b : value;
+    }
+}

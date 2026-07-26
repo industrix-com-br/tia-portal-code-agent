@@ -35,6 +35,10 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
     private bool _showResponse;
     private bool _showError;
 
+    // Minimalist UI additions
+    private string _userInput = "";
+    private bool _showTechnicalDetails;
+
     public AgentResponseViewModel(AgentResponseContext context, BridgeTaskMonitor monitor)
     {
         _context = context;
@@ -50,30 +54,59 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
         CancelCommand = new AsyncRelayCommand(ExecuteCancelAsync, () => CanCancel);
         RetryCommand = new RelayCommand(ExecuteRetry, () => CanRetry);
         CopyCommand = new RelayCommand(ExecuteCopy, () => ShowResponse);
+        CopyResponseCommand = new RelayCommand(ExecuteCopyResponse, () => ShowResponse);
         CloseCommand = new RelayCommand(ExecuteClose);
-        ToggleTechnicalDetailsCommand = new RelayCommand(() =>
-        {
-            if (ErrorDetails != null)
-                ErrorDetails.ShowTechnicalDetails = !ErrorDetails.ShowTechnicalDetails;
-        });
+        SendCommand = new RelayCommand(ExecuteSend, () => CanSend);
+        ToggleTechnicalDetailsCommand = new RelayCommand(ExecuteToggleTechnicalDetails);
 
         // Set initial context values
         OnPropertyChanged(nameof(ActionDisplay));
+        OnPropertyChanged(nameof(ActionId));
         OnPropertyChanged(nameof(ObjectName));
         OnPropertyChanged(nameof(ObjectType));
         OnPropertyChanged(nameof(PlcName));
         OnPropertyChanged(nameof(ProjectName));
         OnPropertyChanged(nameof(CorrelationId));
+        OnPropertyChanged(nameof(HeaderDisplay));
     }
 
     #region Context Properties
 
     public string ActionDisplay => _context.ActionDisplay;
+    public string ActionId => _context.Action;
     public string ObjectName => _context.ObjectName;
     public string ObjectType => _context.ObjectType;
     public string? PlcName => _context.PlcName;
     public string? ProjectName => _context.ProjectName;
     public string? CorrelationId => _context.CorrelationId;
+
+    /// <summary>
+    /// Combined header display: action + object name + type.
+    /// Examples: "Explain code · OB1 · Main", "Review code · FB12 · ConveyorControl"
+    /// </summary>
+    public string HeaderDisplay
+    {
+        get
+        {
+            var actionDisplay = ActionId.ToLowerInvariant() switch
+            {
+                "explain" => Strings.ActionExplain,
+                "review" => Strings.ActionReview,
+                "propose" => Strings.ActionPropose,
+                _ => ActionDisplay
+            };
+
+            if (!string.IsNullOrEmpty(ObjectName))
+            {
+                var objectInfo = string.IsNullOrEmpty(ObjectType)
+                    ? ObjectName
+                    : $"{ObjectName} · {ObjectType}";
+                return $"{actionDisplay} · {objectInfo}";
+            }
+
+            return actionDisplay;
+        }
+    }
 
     #endregion
 
@@ -112,7 +145,14 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
     public bool IsBusy
     {
         get => _isBusy;
-        private set => SetProperty(ref _isBusy, value);
+        private set
+        {
+            if (SetProperty(ref _isBusy, value))
+            {
+                OnPropertyChanged(nameof(ShowLoading));
+                OnPropertyChanged(nameof(ShowTextInput));
+            }
+        }
     }
 
     public bool CanCancel
@@ -152,7 +192,14 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowResponse
     {
         get => _showResponse;
-        private set => SetProperty(ref _showResponse, value);
+        private set
+        {
+            if (SetProperty(ref _showResponse, value))
+            {
+                OnPropertyChanged(nameof(ShowCopyButton));
+                OnPropertyChanged(nameof(ShowTextInput));
+            }
+        }
     }
 
     public bool ShowError
@@ -165,13 +212,50 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
 
     #endregion
 
+    #region Minimalist UI Properties
+
+    /// <summary>Shows loading state when busy and not showing response/error.</summary>
+    public bool ShowLoading => IsBusy && !ShowResponse && !ShowError;
+
+    /// <summary>Shows text input when not busy and not showing error.</summary>
+    public bool ShowTextInput => !IsBusy && !ShowError;
+
+    /// <summary>Shows copy button when response is visible.</summary>
+    public bool ShowCopyButton => ShowResponse && !string.IsNullOrEmpty(ResponseContent);
+
+    /// <summary>User input from the text box (for future conversational follow-up).</summary>
+    public string UserInput
+    {
+        get => _userInput;
+        set => SetProperty(ref _userInput, value);
+    }
+
+    /// <summary>Whether the Send button can be executed.</summary>
+    public bool CanSend => !string.IsNullOrWhiteSpace(UserInput) && !IsBusy;
+
+    /// <summary>Whether technical details are expanded in error state.</summary>
+    public bool ShowTechnicalDetails
+    {
+        get => _showTechnicalDetails;
+        set => SetProperty(ref _showTechnicalDetails, value);
+    }
+
+    /// <summary>Technical details text for the expander.</summary>
+    public string TechnicalDetails => ErrorDetails?.TechnicalDetails ?? "";
+
+    #endregion
+
     #region Child ViewModels
 
     private ErrorDetailsViewModel? _errorDetails;
     public ErrorDetailsViewModel? ErrorDetails
     {
         get => _errorDetails;
-        private set => SetProperty(ref _errorDetails, value);
+        private set
+        {
+            if (SetProperty(ref _errorDetails, value))
+                OnPropertyChanged(nameof(TechnicalDetails));
+        }
     }
 
     private ApprovalPreviewViewModel? _approvalPreview;
@@ -188,7 +272,9 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
     public ICommand CancelCommand { get; }
     public ICommand RetryCommand { get; }
     public ICommand CopyCommand { get; }
+    public ICommand CopyResponseCommand { get; }
     public ICommand CloseCommand { get; }
+    public ICommand SendCommand { get; }
     public ICommand ToggleTechnicalDetailsCommand { get; }
 
     #endregion
@@ -248,6 +334,24 @@ public sealed class AgentResponseViewModel : INotifyPropertyChanged, IDisposable
         {
             // Clipboard access can fail in some environments
         }
+    }
+
+    private void ExecuteCopyResponse()
+    {
+        ExecuteCopy();
+    }
+
+    private void ExecuteSend()
+    {
+        // Placeholder for future conversational follow-up
+        // For now, just clear the input
+        UserInput = "";
+    }
+
+    private void ExecuteToggleTechnicalDetails()
+    {
+        ShowTechnicalDetails = !ShowTechnicalDetails;
+        OnPropertyChanged(nameof(TechnicalDetails));
     }
 
     private void ExecuteClose()
