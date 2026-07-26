@@ -1,71 +1,112 @@
-# Releasing
+# Release Guide
 
-A release is produced from one immutable Git tag, published as one NuGet package containing the complete installation payload, and mirrored as a GitHub Release with downloadable assets.
+This document defines the required procedure for creating a TIA Portal Code Agent release.
 
-## 1. Choose the version
+Release infrastructure, credentials, Trusted Publishing, and runner configuration are documented separately in [`RELEASE_INFRASTRUCTURE.md`](RELEASE_INFRASTRUCTURE.md).
 
-Follow [`VERSIONING.md`](VERSIONING.md). Examples:
+## Authority
+
+Do not create or publish a release unless a maintainer explicitly requests it.
+
+Before starting, confirm the exact release version.
+
+Supported formats:
 
 ```text
-0.3.0-beta.1
-0.3.0-rc.1
-0.3.0
+X.Y.Z
+X.Y.Z-alpha.N
+X.Y.Z-beta.N
+X.Y.Z-rc.N
 ```
 
-Confirm the target commit is merged into `main` and the `CI` check passes.
+The Git tag is the public source of truth for the product version. Do not edit project files, package files, manifests, or version properties to prepare a release.
 
-## 2. Validate locally
+See [`VERSIONING.md`](VERSIONING.md) for the complete versioning rules.
 
-On a Windows machine with TIA Portal V21 and signing credentials available:
+## 1. Check the release preconditions
 
-```powershell
-.\build.ps1 release -Version 0.3.0-beta.1
-```
+Before creating a release:
 
-The command cleans previous outputs, builds, tests, packages and signs the Add-In, verifies it, assembles the payload, creates the NuGet package, validates its contents, and tests local tool installation.
+1. Confirm that the target changes are merged into `main`.
+2. Confirm that the latest `CI` check for the target commit passed.
+3. Confirm that the requested version has never been published.
+4. Confirm that the release tag does not already exist.
+5. Confirm that the target commit is contained in `main`.
+6. Review the changes since the previous release for unexpected or incomplete work.
 
-## 3. Create the tag
+Do not release directly from a feature branch or pull request branch.
+
+## 2. Validate the release locally
+
+On a Windows machine with TIA Portal V21 and the required signing credentials:
 
 ```powershell
 git switch main
 git pull --ff-only
-git tag -a v0.3.0-beta.1 -m "Release v0.3.0-beta.1"
-git push origin v0.3.0-beta.1
+
+.\build.ps1 release -Version X.Y.Z-beta.N
 ```
 
-The tag triggers `.github/workflows/pipeline.yml`. The publication job extracts the version, runs:
+The command must complete successfully. It cleans previous outputs, builds, tests, signs and verifies the Add-In, assembles the installation payload, creates the NuGet package, validates its contents, and tests local tool installation.
+
+If the required TIA Portal V21 or signing environment is unavailable, do not report local release validation as successful. State that final validation must be completed by the configured release runner.
+
+## 3. Create and push the release tag
+
+Create an annotated tag from the validated `main` commit:
 
 ```powershell
-.\build.ps1 release -Version 0.3.0-beta.1
+git tag -a vX.Y.Z-beta.N -m "Release vX.Y.Z-beta.N"
+git push origin vX.Y.Z-beta.N
 ```
 
-It then authenticates to NuGet through Trusted Publishing, pushes the generated `.nupkg` with `--skip-duplicate`, and creates a GitHub Release containing:
+Never:
 
-- generated release notes;
-- `TiaAgent.Cli.<version>.nupkg`;
-- `TiaAgent-<version>.addin`.
+- move an existing release tag;
+- delete and recreate a published release tag;
+- reuse a version;
+- tag a commit that is not contained in `main`.
 
-Versions containing a prerelease suffix such as `-alpha.N`, `-beta.N`, or `-rc.N` are marked as prereleases on GitHub.
+Pushing the tag starts the publication job in `.github/workflows/pipeline.yml`.
 
-## 4. Validate the GitHub Release
+## 4. Monitor publication
 
-Open the release associated with the tag and confirm:
+Verify that the `Publish NuGet` job:
 
-- the release is published rather than only showing as a tag;
-- prerelease versions are marked correctly;
-- the NuGet package and signed Add-In are attached;
-- the generated release notes describe the expected changes.
+1. checked out the expected tag;
+2. validated that the tag belongs to `main`;
+3. completed `build.ps1 release`;
+4. published `TiaAgent.Cli.<version>.nupkg`;
+5. created the GitHub Release;
+6. attached the NuGet package and signed Add-In.
 
-## 5. Validate NuGet publication
+Expected release assets:
 
-After NuGet finishes processing the package, verify the exact version is visible and install it in a clean location:
+```text
+TiaAgent.Cli.<version>.nupkg
+TiaAgent-<version>.addin
+```
+
+Versions containing `-alpha.N`, `-beta.N`, or `-rc.N` must be marked as prereleases on GitHub.
+
+## 5. Validate the published release
+
+Confirm that the GitHub Release is published and contains the expected assets and generated release notes.
+
+After NuGet.org finishes processing the package, install the exact published version in a clean location:
 
 ```powershell
 # Stable
-dotnet tool install --global TiaAgent.Cli --version 0.3.0
+dotnet tool install --global TiaAgent.Cli --version X.Y.Z
 
 # Prerelease
-dotnet tool install --global TiaAgent.Cli --version 0.3.0-beta.1
+dotnet tool install --global TiaAgent.Cli --version X.Y.Z-beta.N
+```
+
+For an existing installation:
+
+```powershell
+dotnet tool update --global TiaAgent.Cli --version X.Y.Z-beta.N
 ```
 
 Then run:
@@ -75,50 +116,45 @@ tia-agent version
 tia-agent doctor
 ```
 
-## GitHub and NuGet.org configuration
+Confirm that the reported product version matches the release version and that diagnostics complete successfully.
 
-### GitHub secrets
+## Failure handling
 
-Configure:
+If the workflow fails before publishing an immutable artifact, retry the failed job or use the workflow's manual dispatch with the existing release tag.
 
-- `NUGET_USER`: NuGet.org account username used by `NuGet/login@v1`;
-- `TIA_SIGNING_CERT_PFX_BASE64`;
-- `TIA_SIGNING_CERT_PASSWORD`;
-- optionally `TIA_SIGNING_CERT_THUMBPRINT`.
+If the NuGet version was already published, it cannot be replaced. Correct the issue and create a new version.
 
-### GitHub token permissions
+If the tag points to incorrect code after publication, do not move the tag. Create a corrected release with a new version.
 
-The release job requires:
+Never bypass failed validation, signing, tests, or package verification.
 
-```yaml
-permissions:
-  contents: write
-  id-token: write
-```
+## Prohibited actions
 
-`contents: write` creates the GitHub Release and uploads its assets. `id-token: write` enables NuGet Trusted Publishing through OIDC.
+Release agents and maintainers must not:
 
-### NuGet Trusted Publishing
+- manually edit product versions;
+- publish from an unmerged branch;
+- use `--skipEngMemberCheck`;
+- bypass signing or package validation;
+- add permanent NuGet API keys to the normal release workflow;
+- publish Siemens assemblies;
+- report success before checking both GitHub Releases and NuGet.org.
 
-On NuGet.org, create a Trusted Publishing policy for:
+## Completion report
 
-- repository owner: `industrix-com-br`;
-- repository: `tia-portal-code-agent`;
-- workflow file: `pipeline.yml`;
-- environment: only when the workflow is configured to use one.
+A release task is complete only after both the GitHub Release and NuGet publication have been verified.
 
-The workflow requests `id-token: write`, calls `NuGet/login@v1`, and uses the temporary API key returned by that action. Do not configure a permanent NuGet API key in the normal release workflow.
-
-### First package bootstrap
-
-NuGet.org may require the package ID to exist before a Trusted Publishing policy can be finalized. When necessary, publish the first version manually with a short-lived scoped API key, configure Trusted Publishing immediately afterward, revoke the key, and do not add hybrid API-key fallback logic to the workflow.
-
-## Runner requirement
-
-Publication uses the self-hosted Windows release runner labels:
+Report:
 
 ```text
-self-hosted, Windows, x64, tia-v21, release-runner
+Version:
+Tag:
+Commit:
+CI status:
+Publish workflow:
+GitHub Release:
+NuGet publication:
+Attached artifacts:
+Smoke-test result:
+Known issues:
 ```
-
-That runner must have TIA Portal V21, the Siemens Add-In Publisher, .NET SDK 8, and access to the signing secrets. Pull-request CI never runs on this machine.
