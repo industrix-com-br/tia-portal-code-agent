@@ -15,7 +15,8 @@ permissions:
 jobs:
   verify-release:
     if: >-
-      (github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-status/v')) ||
+      (github.event_name == 'create' && github.event.ref_type == 'branch' &&
+        (startsWith(github.event.ref, 'release-status/v') || startsWith(github.event.ref, 'release-status-r2/v'))) ||
       (github.event_name == 'push' && startsWith(github.ref_name, 'release-status/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -35,7 +36,19 @@ jobs:
             trigger_branch="${GITHUB_REF#refs/heads/}"
           fi
 
-          tag="${trigger_branch#release-status/}"
+          case "$trigger_branch" in
+            release-status/*)
+              tag="${trigger_branch#release-status/}"
+              ;;
+            release-status-r2/*)
+              tag="${trigger_branch#release-status-r2/}"
+              ;;
+            *)
+              echo "Unsupported release verification branch: $trigger_branch" >&2
+              exit 1
+              ;;
+          esac
+
           version="${tag#v}"
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-((alpha|beta|rc)\.[0-9]+))?$ ]]; then
             echo "Invalid release tag derived from status branch: $tag" >&2
@@ -120,3 +133,6 @@ jobs:
 
           gh pr comment "$REPORT_PR" --body-file release-report.md
           git push origin --delete "$trigger_branch"
+          if [[ "$trigger_branch" != "release-status/$tag" ]]; then
+            git push origin --delete "release-status/$tag" || true
+          fi
