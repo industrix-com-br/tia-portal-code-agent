@@ -118,11 +118,13 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
                 AddInLogger.Warn($"No source extracted for {selectionInfo}");
             }
 
-            if (!AssistantExecutionWindowFactory.TryCreate(
+            var createResult = await AssistantExecutionWindowFactory.TryCreateAsync(
                     action,
                     correlationId,
                     selectionInfo,
-                    out var executionView) || executionView == null)
+                    windowReadyTimeout: TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+            if (createResult == null || createResult.Value.view == null)
             {
                 AddInLogger.Error("The WPF execution window could not be created.");
                 AssistantPanelFactory.ShowError(
@@ -130,28 +132,38 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
                 return;
             }
 
-            var coordinator = new AssistantExecutionCoordinator();
-            await coordinator.ExecuteAsync(
-                executionView,
-                cancellationToken => ExecuteViaBridgeAsync(
-                    action,
-                    selectionInfo,
-                    typeName,
-                    correlationId,
-                    selectionSnapshot,
-                    cancellationToken),
-                FormatUserErrorMessage,
-                onExecutionStarting: () => AddInLogger.Info("Agent request started."),
-                onExecutionCompleted: result =>
-                {
-                    AddInLogger.Info($"Agent response received. Response length: {result.Markdown.Length} chars; " +
-                                     $"sha256={TextPayloadDiagnostics.ComputeUtf8Sha256(result.Markdown)}");
-                },
-                onExecutionFailed: ex =>
-                {
-                    var diagnostics = FormatExceptionDiagnostics(ex, action, correlationId);
-                    AddInLogger.Error(diagnostics, null);
-                }).ConfigureAwait(false);
+            var executionView = createResult.Value.view;
+            var wpfHost = createResult.Value.host;
+
+            try
+            {
+                var coordinator = new AssistantExecutionCoordinator();
+                await coordinator.ExecuteAsync(
+                    executionView,
+                    cancellationToken => ExecuteViaBridgeAsync(
+                        action,
+                        selectionInfo,
+                        typeName,
+                        correlationId,
+                        selectionSnapshot,
+                        cancellationToken),
+                    FormatUserErrorMessage,
+                    onExecutionStarting: () => AddInLogger.Info("Agent request started."),
+                    onExecutionCompleted: result =>
+                    {
+                        AddInLogger.Info($"Agent response received. Response length: {result.Markdown.Length} chars; " +
+                                         $"sha256={TextPayloadDiagnostics.ComputeUtf8Sha256(result.Markdown)}");
+                    },
+                    onExecutionFailed: ex =>
+                    {
+                        var diagnostics = FormatExceptionDiagnostics(ex, action, correlationId);
+                        AddInLogger.Error(diagnostics, null);
+                    }).ConfigureAwait(false);
+            }
+            finally
+            {
+                wpfHost?.Dispose();
+            }
         }
         catch (Exception ex)
         {
