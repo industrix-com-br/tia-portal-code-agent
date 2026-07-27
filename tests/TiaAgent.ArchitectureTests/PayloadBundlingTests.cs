@@ -18,9 +18,28 @@ public sealed class PayloadBundlingTests
 
         buildScriptContent.Should().Contain("payload-manifest.json");
         buildScriptContent.Should().Contain("Bridge\\TiaAgent.Bridge.dll");
+        buildScriptContent.Should().Contain("ResponseCenter\\TiaAgent.ResponseCenter.exe");
+        buildScriptContent.Should().Contain("src\\TiaAgent.ResponseCenter\\TiaAgent.ResponseCenter.csproj");
         buildScriptContent.Should().Contain("TiaAgent-$ProductVersion.addin");
         buildScriptContent.Should().Contain("THIRD_PARTY_NOTICES.md");
         buildScriptContent.Should().Contain("Siemens.*.dll");
+    }
+
+    [Fact]
+    public void Response_center_is_the_single_task_result_ui()
+    {
+        var root = FindRepositoryRoot();
+        var solutionContent = File.ReadAllText(Path.Combine(root, "TiaAgent.sln"));
+        var addInUiPath = Path.Combine(root, "src", "TiaAgent.AddIn", "Ui");
+
+        solutionContent.Should().Contain("src\\TiaAgent.ResponseCenter\\TiaAgent.ResponseCenter.csproj");
+        solutionContent.Should().Contain("tests\\TiaAgent.ResponseCenter.Tests\\TiaAgent.ResponseCenter.Tests.csproj");
+
+        File.Exists(Path.Combine(addInUiPath, "ResponseCenterLauncher.cs")).Should().BeTrue();
+        File.Exists(Path.Combine(addInUiPath, "AssistantExecutionWindow.cs")).Should().BeFalse();
+        File.Exists(Path.Combine(addInUiPath, "AssistantPanelFactory.cs")).Should().BeFalse();
+        File.Exists(Path.Combine(addInUiPath, "WpfThreadHost.cs")).Should().BeFalse();
+        File.Exists(Path.Combine(addInUiPath, "SimpleMarkdownFlowDocumentRenderer.cs")).Should().BeFalse();
     }
 
     [Fact]

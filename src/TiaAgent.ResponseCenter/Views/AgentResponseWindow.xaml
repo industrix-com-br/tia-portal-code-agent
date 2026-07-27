@@ -132,13 +132,7 @@
                             Command="{Binding CancelCommand}"
                             Style="{StaticResource SecondaryButton}"
                             Padding="{StaticResource Spacing.CompactButton}"
-                            Margin="0,0,6,0"
                             Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}" />
-                    <Button Content="{x:Static local:Strings.ButtonRetry}"
-                            Command="{Binding RetryCommand}"
-                            Style="{StaticResource PrimaryButton}"
-                            Padding="{StaticResource Spacing.CompactButton}"
-                            Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -229,16 +223,11 @@
                             <Run Text="Correlation: " />
                             <Run Text="{Binding ErrorDetails.CorrelationId, Mode=OneWay}" />
                         </TextBlock>
-                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                            <Button Content="{x:Static local:Strings.ButtonRetry}"
-                                    Command="{Binding RetryCommand}"
-                                    Style="{StaticResource PrimaryButton}"
-                                    Margin="0,0,8,0"
-                                    Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}" />
-                            <Button Content="{x:Static local:Strings.ButtonClose}"
-                                    Command="{Binding CloseCommand}"
-                                    Style="{StaticResource SecondaryButton}" />
-                        </StackPanel>
+                        <Button Content="{x:Static local:Strings.ButtonClose}"
+                                Command="{Binding CloseCommand}"
+                                Style="{StaticResource SecondaryButton}"
+                                Margin="0,16,0,0"
+                                HorizontalAlignment="Left" />
                     </StackPanel>
                 </Grid>
 

@@ -137,7 +137,8 @@ function Invoke-Build {
     foreach ($artifact in @(
         "$Root\src\TiaAgent.AddIn\bin\$Configuration\net48\TiaAgent.AddIn.dll",
         "$Root\src\TiaAgent.Bridge\bin\$Configuration\net8.0\TiaAgent.Bridge.dll",
-        "$Root\src\TiaAgent.Cli\bin\$Configuration\net8.0\TiaAgent.Cli.dll"
+        "$Root\src\TiaAgent.Cli\bin\$Configuration\net8.0\TiaAgent.Cli.dll",
+        "$Root\src\TiaAgent.ResponseCenter\bin\$Configuration\net8.0-windows\TiaAgent.ResponseCenter.exe"
     )) {
         if (-not (Test-Path $artifact)) {
             throw "Expected build artifact not found: $artifact"
@@ -202,6 +203,7 @@ function New-PayloadManifest {
     }
 
     $bridgePath = Join-Path $PayloadDir "Bridge\TiaAgent.Bridge.dll"
+    $responseCenterPath = Join-Path $PayloadDir "ResponseCenter\TiaAgent.ResponseCenter.exe"
     $addInName = "TiaAgent-$ProductVersion.addin"
     $addInPath = Join-Path $PayloadDir "AddIn\$addInName"
 
@@ -221,6 +223,12 @@ function New-PayloadManifest {
                 version = $ProductVersion
                 sha256Hash = (Get-FileHash $bridgePath -Algorithm SHA256).Hash.ToLowerInvariant()
                 sizeBytes = (Get-Item $bridgePath).Length
+            }
+            responseCenter = [ordered]@{
+                relativePath = "ResponseCenter/TiaAgent.ResponseCenter.exe"
+                version = $ProductVersion
+                sha256Hash = (Get-FileHash $responseCenterPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                sizeBytes = (Get-Item $responseCenterPath).Length
             }
             addin = [ordered]@{
                 relativePath = "AddIn/$addInName"
@@ -246,6 +254,8 @@ function Test-NuGetPayload {
         $required = @(
             "tools/net8.0/any/payload/payload-manifest.json",
             "tools/net8.0/any/payload/Bridge/TiaAgent.Bridge.dll",
+            "tools/net8.0/any/payload/ResponseCenter/TiaAgent.ResponseCenter.exe",
+            "tools/net8.0/any/payload/ResponseCenter/TiaAgent.ResponseCenter.runtimeconfig.json",
             $expectedAddIn,
             "tools/net8.0/any/payload/notices/THIRD_PARTY_NOTICES.md",
             "tools/net8.0/any/payload/notices/LICENSE"
@@ -297,10 +307,12 @@ function Invoke-PackNuGet {
         Remove-Item $payloadDir -Recurse -Force
     }
 
-    New-Item -ItemType Directory -Path "$payloadDir\Bridge", "$payloadDir\AddIn", "$payloadDir\config", "$payloadDir\notices" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$payloadDir\Bridge", "$payloadDir\ResponseCenter", "$payloadDir\AddIn", "$payloadDir\config", "$payloadDir\notices" -Force | Out-Null
 
     Invoke-Dotnet @("publish", "$Root\src\TiaAgent.Bridge\TiaAgent.Bridge.csproj", "--configuration", $Configuration, "--output", "$payloadDir\Bridge", "--no-restore")
     Get-ChildItem "$payloadDir\Bridge" -Filter "Siemens.*.dll" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+
+    Invoke-Dotnet @("publish", "$Root\src\TiaAgent.ResponseCenter\TiaAgent.ResponseCenter.csproj", "--configuration", $Configuration, "--output", "$payloadDir\ResponseCenter", "--no-restore")
 
     $addInPath = Join-Path $ArtifactsDir "TiaAgent-$ProductVersion.addin"
     if (-not (Test-Path $addInPath)) {
@@ -356,8 +368,16 @@ function Invoke-InstallDev {
     Invoke-Build
     Invoke-PackAddIn
     Invoke-VerifyAddIn
-    Invoke-MsBuildTarget -Target "InstallAddIn"
-    Write-Ok "Development Add-In installed"
+    Invoke-PackNuGet
+
+    $cliDll = "$Root\src\TiaAgent.Cli\bin\$Configuration\net8.0\TiaAgent.Cli.dll"
+    $payloadDir = Join-Path $ArtifactsDir "cli-payload"
+    & dotnet $cliDll install --version $ProductVersion --payload-dir $payloadDir --force
+    if ($LASTEXITCODE -ne 0) {
+        throw "Development product installation failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Ok "Development product installed with Add-In and Response Center"
 }
 
 function Show-Help {
@@ -369,7 +389,7 @@ function Show-Help {
     Write-Host "  test         Restore and run the test suite"
     Write-Host "  pack         Build the product, package the Add-In and create the NuGet package"
     Write-Host "  release      Clean, build, test, sign, verify and package a release"
-    Write-Host "  install-dev  Build, package and install a local Add-In"
+    Write-Host "  install-dev  Build, package and install the complete local product"
     Write-Host "  clean        Remove bin, obj and artifacts"
     Write-Host ""
     Write-Host "Resolved version: $ProductVersion"

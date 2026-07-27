@@ -11,12 +11,6 @@
     <DefineConstants>$(DefineConstants);SIEMENS</DefineConstants>
   </PropertyGroup>
 
-  <!-- The renderer and plain-text helper are compiled only when the Siemens Add-In
-       surface is available. Hosted CI still runs the environment-independent tests. -->
-  <ItemGroup Condition="'$(SiemensAssembliesExist)' != 'true'">
-    <Compile Remove="SimpleMarkdownFlowDocumentRendererTests.cs" />
-  </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
