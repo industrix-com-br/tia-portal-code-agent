@@ -321,7 +321,7 @@ jobs:
             throw "Pipeline CI for commit $headCommit has status $($ciRun.conclusion). Cannot release from unverified commit."
           }
 
-          Write-Host "CI passed for commit $headCommit: $($ciRun.html_url)"
+          Write-Host "CI passed for commit ${headCommit}: $($ciRun.html_url)"
 
       - name: Checkout release tag
         uses: actions/checkout@v6
