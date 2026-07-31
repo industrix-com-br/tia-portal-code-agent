@@ -19,19 +19,15 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 {
     private static readonly Encoding s_strictUtf8 = new UTF8Encoding(false, true);
 
-    private readonly HttpClient _httpClient;
+    private HttpClient _httpClient;
     private readonly AddInConfig _config;
     private readonly bool _ownsHttpClient;
+    private string? _currentBaseUrl;
 
     public AgentBridgeClient(AddInConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(config.BridgeBaseUrl),
-            Timeout = TimeSpan.FromSeconds(config.RequestTimeoutSeconds)
-        };
-        ConfigureAuthentication(_httpClient, config);
+        _httpClient = CreateHttpClient(config);
         _ownsHttpClient = true;
     }
 
@@ -91,6 +87,35 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         }
     }
 
+    private HttpClient CreateHttpClient(AddInConfig config)
+    {
+        var baseUrl = config.BridgeBaseUrl;
+        _currentBaseUrl = baseUrl;
+        AddInLogger.Info($"Bridge client connecting to {baseUrl}");
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri(baseUrl),
+            Timeout = TimeSpan.FromSeconds(config.RequestTimeoutSeconds)
+        };
+        ConfigureAuthentication(client, config);
+        return client;
+    }
+
+    /// <summary>
+    /// Ensures the HttpClient points to the current Bridge URL.
+    /// If the Bridge restarted on a different port, the client is recreated.
+    /// </summary>
+    private void EnsureCurrentClient()
+    {
+        var currentUrl = _config.BridgeBaseUrl;
+        if (_currentBaseUrl == currentUrl) return;
+
+        AddInLogger.Info($"Bridge URL changed from {_currentBaseUrl} to {currentUrl} — recreating HttpClient");
+        if (_ownsHttpClient)
+            _httpClient.Dispose();
+        _httpClient = CreateHttpClient(_config);
+    }
+
     private static string TokenFingerprint(string token)
     {
         if (string.IsNullOrEmpty(token)) return "<empty>";
@@ -107,6 +132,7 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 
     public async Task<BridgeHealthResponse> CheckHealthAsync(CancellationToken cancellationToken)
     {
+        EnsureCurrentClient();
         var response = await _httpClient.GetAsync("/health", cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
@@ -116,6 +142,7 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 
     public async Task<BridgeTaskAccepted> StartTaskAsync(BridgeTaskRequest request, CancellationToken cancellationToken)
     {
+        EnsureCurrentClient();
         var json = BuildTaskRequestJson(request);
 
         // Use manually encoded UTF-8 bytes to make the request body unambiguous.
@@ -137,6 +164,7 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 
     public async Task<BridgeTaskStatus> GetTaskAsync(string taskId, CancellationToken cancellationToken)
     {
+        EnsureCurrentClient();
         var response = await _httpClient.GetAsync($"/v1/tasks/{taskId}", cancellationToken).ConfigureAwait(false);
         var json = await ReadResponseUtf8Async(response).ConfigureAwait(false);
 
@@ -148,8 +176,31 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
 
     public async Task CancelTaskAsync(string taskId, CancellationToken cancellationToken)
     {
+        EnsureCurrentClient();
         var response = await _httpClient.PostAsync($"/v1/tasks/{taskId}/cancel", null, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<LaunchResponseCenterResponse> LaunchResponseCenterAsync(
+        LaunchResponseCenterRequest request, CancellationToken cancellationToken)
+    {
+        EnsureCurrentClient();
+        var json = BuildLaunchRequestJson(request);
+
+        var jsonBytes = Encoding.UTF8.GetBytes(json);
+        var content = new ByteArrayContent(jsonBytes, 0, jsonBytes.Length);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json")
+        {
+            CharSet = "utf-8"
+        };
+
+        var response = await _httpClient.PostAsync("/v1/response-center/launch", content, cancellationToken).ConfigureAwait(false);
+        var responseJson = await ReadResponseUtf8Async(response).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+            throw new BridgeTaskException($"Bridge returned {(int)response.StatusCode}: {responseJson}");
+
+        return ParseLaunchResponse(responseJson);
     }
 
     #region JSON Serialization (Manual)
@@ -389,6 +440,29 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
         return defaultValue;
     }
 
+    private static long ExtractJsonLong(string json, string key, long defaultValue = 0)
+    {
+        var search = "\"" + key + "\"";
+        var idx = json.IndexOf(search, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return defaultValue;
+
+        idx = json.IndexOf(':', idx + search.Length);
+        if (idx < 0) return defaultValue;
+
+        idx++;
+        while (idx < json.Length && json[idx] == ' ') idx++;
+
+        if (idx >= json.Length) return defaultValue;
+
+        var start = idx;
+        while (idx < json.Length && char.IsDigit(json[idx])) idx++;
+
+        if (idx > start && long.TryParse(json.Substring(start, idx - start), out var value))
+            return value;
+
+        return defaultValue;
+    }
+
     private static bool ExtractJsonBool(string json, string key, bool defaultValue = false)
     {
         var search = "\"" + key + "\"";
@@ -432,6 +506,29 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
             TaskId = ExtractJsonString(json, "taskId") ?? "",
             Status = ExtractJsonString(json, "status") ?? "pending",
             CorrelationId = ExtractJsonString(json, "correlationId") ?? ""
+        };
+    }
+
+    private string BuildLaunchRequestJson(LaunchResponseCenterRequest request)
+    {
+        var sb = new StringBuilder();
+        sb.Append('{');
+        sb.AppendFormat("\"taskId\":\"{0}\"", EscapeJson(request.TaskId));
+        sb.AppendFormat(",\"tiaInstanceId\":\"{0}\"", EscapeJson(request.TiaInstanceId));
+        sb.AppendFormat(",\"action\":\"{0}\"", EscapeJson(request.Action));
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private LaunchResponseCenterResponse ParseLaunchResponse(string json)
+    {
+        return new LaunchResponseCenterResponse
+        {
+            Status = ExtractJsonString(json, "status") ?? ResponseCenterLaunchStatus.StartupFailure,
+            ProcessId = ExtractJsonInt(json, "processId"),
+            ActivatedExistingInstance = ExtractJsonBool(json, "activatedExistingInstance"),
+            WindowHandle = ExtractJsonLong(json, "windowHandle"),
+            ErrorMessage = ExtractJsonString(json, "errorMessage")
         };
     }
 

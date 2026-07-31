@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TiaAgent.Bridge.Configuration;
 using TiaAgent.Bridge.Diagnostics;
+using TiaAgent.Bridge.ResponseCenter;
 using TiaAgent.Bridge.Runtime;
 using TiaAgent.Bridge.Security;
 using TiaAgent.Bridge.Sessions;
@@ -35,6 +36,7 @@ public sealed class BridgeController : IDisposable
     private readonly TokenProvider _tokenProvider;
     private readonly RuntimeRegistry _runtimeRegistry;
     private readonly TaskManager _taskManager;
+    private readonly ResponseCenterProcessManager _rcProcessManager;
     private readonly CancellationTokenSource _shutdownCts = new();
 
     public BridgeController(
@@ -42,13 +44,15 @@ public sealed class BridgeController : IDisposable
         BridgeLogger logger,
         TokenProvider tokenProvider,
         RuntimeRegistry runtimeRegistry,
-        TaskManager taskManager)
+        TaskManager taskManager,
+        ResponseCenterProcessManager rcProcessManager)
     {
         _config = config;
         _logger = logger;
         _tokenProvider = tokenProvider;
         _runtimeRegistry = runtimeRegistry;
         _taskManager = taskManager;
+        _rcProcessManager = rcProcessManager;
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://127.0.0.1:{config.Port}/");
     }
@@ -129,6 +133,9 @@ public sealed class BridgeController : IDisposable
                     var cancelTaskId = path.Substring("/v1/tasks/".Length);
                     cancelTaskId = cancelTaskId.Substring(0, cancelTaskId.Length - "/cancel".Length);
                     await HandleCancelTaskAsync(cancelTaskId, response).ConfigureAwait(false);
+                    break;
+                case ("POST", "/v1/response-center/launch"):
+                    await HandleLaunchResponseCenterAsync(request, response).ConfigureAwait(false);
                     break;
 
                 // New runtime endpoints
@@ -296,6 +303,78 @@ public sealed class BridgeController : IDisposable
         }
 
         await WriteJsonResponseAsync(response, 200, "{\"status\":\"cancelled\"}").ConfigureAwait(false);
+    }
+
+    private async Task HandleLaunchResponseCenterAsync(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        var body = await ReadRequestBodyAsync(request).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(body))
+        {
+            await WriteJsonResponseAsync(response, 400, "{\"error\":\"Empty request body\"}").ConfigureAwait(false);
+            return;
+        }
+
+        LaunchResponseCenterRequest? launchRequest;
+        try
+        {
+            launchRequest = JsonSerializer.Deserialize<LaunchResponseCenterRequest>(body, s_jsonOptions);
+        }
+        catch (JsonException)
+        {
+            await WriteJsonResponseAsync(response, 400, "{\"error\":\"Invalid JSON\"}").ConfigureAwait(false);
+            return;
+        }
+
+        if (launchRequest == null ||
+            string.IsNullOrWhiteSpace(launchRequest.TaskId) ||
+            string.IsNullOrWhiteSpace(launchRequest.TiaInstanceId) ||
+            string.IsNullOrWhiteSpace(launchRequest.Action))
+        {
+            await WriteJsonResponseAsync(response, 400,
+                $"{{\"status\":\"{ResponseCenterLaunchStatus.InvalidRequest}\",\"errorMessage\":\"TaskId, TiaInstanceId, and Action are required.\"}}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        // Validate task exists
+        var taskStatus = _taskManager.GetTaskStatus(launchRequest.TaskId);
+        if (taskStatus == null)
+        {
+            _logger.Warn($"Response Center launch requested for unknown task: {launchRequest.TaskId}");
+            await WriteJsonResponseAsync(response, 404,
+                $"{{\"status\":\"{ResponseCenterLaunchStatus.TaskNotFound}\",\"errorMessage\":\"Task not found: {EscapeJson(launchRequest.TaskId)}\"}}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        _logger.Info(
+            $"Response Center launch: taskId={launchRequest.TaskId}, tiaInstance={launchRequest.TiaInstanceId}, " +
+            $"action={launchRequest.Action}");
+
+        var result = _rcProcessManager.LaunchOrActivate(launchRequest);
+
+        var responseJson = new StringBuilder();
+        responseJson.Append('{');
+        responseJson.AppendFormat("\"status\":\"{0}\"", EscapeJson(result.Status));
+        responseJson.AppendFormat(",\"processId\":{0}", result.ProcessId);
+        responseJson.AppendFormat(",\"activatedExistingInstance\":{0}", result.ActivatedExistingInstance ? "true" : "false");
+        responseJson.AppendFormat(",\"windowHandle\":{0}", result.WindowHandle);
+        if (!string.IsNullOrEmpty(result.ErrorMessage))
+            responseJson.AppendFormat(",\"errorMessage\":\"{0}\"", EscapeJson(result.ErrorMessage));
+        responseJson.Append('}');
+
+        var statusCode = result.Status switch
+        {
+            ResponseCenterLaunchStatus.StartedAndVisible => 200,
+            ResponseCenterLaunchStatus.ActivatedAndVisible => 200,
+            ResponseCenterLaunchStatus.StaleInstanceRestarted => 200,
+            ResponseCenterLaunchStatus.InvalidRequest => 400,
+            ResponseCenterLaunchStatus.TaskNotFound => 404,
+            ResponseCenterLaunchStatus.ExecutableNotFound => 404,
+            _ => 500
+        };
+
+        await WriteJsonResponseAsync(response, statusCode, responseJson.ToString()).ConfigureAwait(false);
     }
 
     #region Runtime Endpoints

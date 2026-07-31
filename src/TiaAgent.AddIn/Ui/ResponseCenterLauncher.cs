@@ -1,65 +1,33 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using TiaAgent.AddIn.Diagnostics;
+using TiaAgent.Contracts.Bridge;
 
 namespace TiaAgent.AddIn.Ui;
 
-internal sealed class ResponseCenterLaunchRequest
-{
-    public ResponseCenterLaunchRequest(
-        string taskId,
-        string action,
-        string objectName,
-        string objectType,
-        string? plcName,
-        string? projectName,
-        string correlationId,
-        string? initialStatus,
-        string bridgeUrl)
-    {
-        TaskId = taskId ?? throw new ArgumentNullException(nameof(taskId));
-        Action = action ?? throw new ArgumentNullException(nameof(action));
-        ObjectName = objectName ?? throw new ArgumentNullException(nameof(objectName));
-        ObjectType = objectType ?? throw new ArgumentNullException(nameof(objectType));
-        PlcName = plcName;
-        ProjectName = projectName;
-        CorrelationId = correlationId ?? throw new ArgumentNullException(nameof(correlationId));
-        InitialStatus = initialStatus;
-        BridgeUrl = bridgeUrl ?? throw new ArgumentNullException(nameof(bridgeUrl));
-    }
-
-    public string TaskId { get; }
-    public string Action { get; }
-    public string ObjectName { get; }
-    public string ObjectType { get; }
-    public string? PlcName { get; }
-    public string? ProjectName { get; }
-    public string CorrelationId { get; }
-    public string? InitialStatus { get; }
-    public string BridgeUrl { get; }
-}
-
 internal sealed class ResponseCenterLaunchResult
 {
-    public ResponseCenterLaunchResult(bool success, string? executablePath, string? errorMessage)
+    public ResponseCenterLaunchResult(bool success, string? status, string? errorMessage, bool activatedExistingInstance)
     {
         Success = success;
-        ExecutablePath = executablePath;
+        Status = status;
         ErrorMessage = errorMessage;
+        ActivatedExistingInstance = activatedExistingInstance;
     }
 
     public bool Success { get; }
-    public string? ExecutablePath { get; }
+    public string? Status { get; }
     public string? ErrorMessage { get; }
+    public bool ActivatedExistingInstance { get; }
 }
 
 /// <summary>
-/// Locates and starts the out-of-process Response Center installed with the active product version.
-/// The Bridge bearer token is intentionally not passed on the command line; the Response Center
-/// discovers it from the local runtime files.
+/// Requests the Bridge to start or activate the Response Center.
+/// The Add-In does not launch processes directly — that responsibility
+/// belongs to the Bridge, which runs outside the TIA Portal sandbox.
 /// </summary>
 internal static class ResponseCenterLauncher
 {
@@ -69,55 +37,68 @@ internal static class ResponseCenterLauncher
         "\\\"activeVersion\\\"\\s*:\\s*\\\"(?<version>[^\\\"]+)\\\"",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public static ResponseCenterLaunchResult Launch(
-        ResponseCenterLaunchRequest request,
-        string? installationRoot = null,
-        Func<ProcessStartInfo, Process?>? processStarter = null)
+    public static async Task<ResponseCenterLaunchResult> RequestResponseCenterLaunchAsync(
+        string taskId,
+        string action,
+        CancellationToken cancellationToken)
     {
-        if (request == null)
-        {
-            throw new ArgumentNullException(nameof(request));
-        }
+        if (string.IsNullOrWhiteSpace(taskId))
+            throw new ArgumentNullException(nameof(taskId));
+        if (string.IsNullOrWhiteSpace(action))
+            throw new ArgumentNullException(nameof(action));
 
         try
         {
-            var executablePath = ResolveExecutablePath(installationRoot);
-            if (!File.Exists(executablePath))
+            var request = new LaunchResponseCenterRequest
             {
-                return new ResponseCenterLaunchResult(
-                    false,
-                    executablePath,
-                    $"Response Center executable was not found at '{executablePath}'. Reinstall or update TIA Agent.");
-            }
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = executablePath,
-                Arguments = BuildArguments(request),
-                WorkingDirectory = Path.GetDirectoryName(executablePath) ?? string.Empty,
-                UseShellExecute = false,
-                CreateNoWindow = false
+                TaskId = taskId,
+                TiaInstanceId = GetCurrentTiaInstanceId(),
+                Action = action
             };
 
-            var process = (processStarter ?? Process.Start)(startInfo);
-            if (process == null)
+            AddInLogger.Info(
+                $"Requesting Bridge to launch Response Center: taskId={taskId}, action={action}");
+
+            var response = await AddInServices.BridgeClient
+                .LaunchResponseCenterAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+
+            var success = response.Status is ResponseCenterLaunchStatus.StartedAndVisible
+                or ResponseCenterLaunchStatus.ActivatedAndVisible
+                or ResponseCenterLaunchStatus.StaleInstanceRestarted;
+
+            if (success)
             {
-                return new ResponseCenterLaunchResult(
-                    false,
-                    executablePath,
-                    "Windows did not start the Response Center process.");
+                AddInLogger.Info(
+                    $"Response Center launch succeeded: status={response.Status}, pid={response.ProcessId}, " +
+                    $"windowHandle={response.WindowHandle}, activatedExisting={response.ActivatedExistingInstance}");
+            }
+            else
+            {
+                AddInLogger.Warn(
+                    $"Response Center launch failed: status={response.Status}, error={response.ErrorMessage}");
             }
 
-            AddInLogger.Info(
-                $"Response Center started. pid={process.Id}, taskId={request.TaskId}, path={executablePath}");
-
-            return new ResponseCenterLaunchResult(true, executablePath, null);
+            return new ResponseCenterLaunchResult(
+                success,
+                response.Status,
+                response.ErrorMessage,
+                response.ActivatedExistingInstance);
         }
         catch (Exception ex)
         {
-            AddInLogger.Error("Failed to start the Response Center.", ex);
-            return new ResponseCenterLaunchResult(false, null, ex.Message);
+            AddInLogger.Error("Failed to request Response Center launch from Bridge.", ex);
+            return new ResponseCenterLaunchResult(
+                false,
+                ResponseCenterLaunchStatus.StartupFailure,
+                ex.Message,
+                false);
         }
+    }
+
+    private static string GetCurrentTiaInstanceId()
+    {
+        return AddInServices.TiaInstanceId;
     }
 
     internal static string ResolveExecutablePath(string? installationRoot = null)
@@ -162,85 +143,5 @@ internal static class ResponseCenterLauncher
 
         var match = s_activeVersionRegex.Match(json);
         return match.Success ? match.Groups["version"].Value : null;
-    }
-
-    internal static string BuildArguments(ResponseCenterLaunchRequest request)
-    {
-        var arguments = new StringBuilder();
-        AppendArgument(arguments, "--task-id", request.TaskId);
-        AppendArgument(arguments, "--bridge-url", request.BridgeUrl);
-        AppendArgument(arguments, "--action", request.Action);
-        AppendArgument(arguments, "--object-name", request.ObjectName);
-        AppendArgument(arguments, "--object-type", request.ObjectType);
-        AppendArgument(arguments, "--plc-name", request.PlcName);
-        AppendArgument(arguments, "--project-name", request.ProjectName);
-        AppendArgument(arguments, "--correlation-id", request.CorrelationId);
-        AppendArgument(arguments, "--initial-status", request.InitialStatus);
-        return arguments.ToString();
-    }
-
-    private static void AppendArgument(StringBuilder arguments, string name, string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return;
-        }
-
-        if (arguments.Length > 0)
-        {
-            arguments.Append(' ');
-        }
-
-        arguments.Append(name);
-        arguments.Append(' ');
-        arguments.Append(QuoteArgument(value!));
-    }
-
-    /// <summary>
-    /// Applies the Windows command-line quoting rules used by CommandLineToArgvW.
-    /// </summary>
-    internal static string QuoteArgument(string value)
-    {
-        if (value.Length == 0)
-        {
-            return "\"\"";
-        }
-
-        var result = new StringBuilder(value.Length + 2);
-        result.Append('"');
-        var backslashCount = 0;
-
-        foreach (var character in value)
-        {
-            if (character == '\\')
-            {
-                backslashCount++;
-                continue;
-            }
-
-            if (character == '"')
-            {
-                result.Append('\\', backslashCount * 2 + 1);
-                result.Append('"');
-                backslashCount = 0;
-                continue;
-            }
-
-            if (backslashCount > 0)
-            {
-                result.Append('\\', backslashCount);
-                backslashCount = 0;
-            }
-
-            result.Append(character);
-        }
-
-        if (backslashCount > 0)
-        {
-            result.Append('\\', backslashCount * 2);
-        }
-
-        result.Append('"');
-        return result.ToString();
     }
 }

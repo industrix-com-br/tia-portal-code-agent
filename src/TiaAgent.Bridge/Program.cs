@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using TiaAgent.Bridge.Api;
 using TiaAgent.Bridge.Configuration;
 using TiaAgent.Bridge.Diagnostics;
+using TiaAgent.Bridge.ResponseCenter;
 using TiaAgent.Bridge.Runtime;
 using TiaAgent.Bridge.Security;
 using TiaAgent.Bridge.Tasks;
@@ -87,8 +88,11 @@ public static class Program
         // Create task manager with runtime registry
         var taskManager = new TaskManager(runtimeRegistry, config.MaxConcurrentTasks, logger);
 
+        // Create Response Center process manager
+        var rcProcessManager = new ResponseCenterProcessManager(logger);
+
         // Create and start the controller
-        var controller = new BridgeController(config, logger, tokenProvider, runtimeRegistry, taskManager);
+        var controller = new BridgeController(config, logger, tokenProvider, runtimeRegistry, taskManager, rcProcessManager);
 
         var shutdownCts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -107,6 +111,7 @@ public static class Program
             logger.Startup("  POST /v1/tasks");
             logger.Startup("  GET  /v1/tasks/{taskId}");
             logger.Startup("  POST /v1/tasks/{taskId}/cancel");
+            logger.Startup("  POST /v1/response-center/launch");
             logger.Startup("  GET  /api/runtimes");
             logger.Startup("  GET  /api/runtimes/{id}/health");
             logger.Startup("  GET  /api/settings/runtime");
@@ -125,6 +130,7 @@ public static class Program
             logger.Info("Shutting down...");
             controller.Stop();
             controller.Dispose();
+            rcProcessManager.Dispose();
             taskManager.Dispose();
             runtimeRegistry.Dispose();
             logger.Info("Bridge stopped");

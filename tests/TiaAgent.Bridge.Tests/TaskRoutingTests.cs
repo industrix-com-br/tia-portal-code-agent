@@ -194,7 +194,8 @@ public class TaskRoutingTests : IDisposable
         var config = new BridgeConfig { Port = _port };
         var taskManager = new TaskManager(_runtimeRegistry, 4, _logger);
 
-        _controller = new BridgeController(config, _logger, _tokenProvider, _runtimeRegistry, taskManager);
+        var rcProcessManager = new TiaAgent.Bridge.ResponseCenter.ResponseCenterProcessManager(_logger);
+        _controller = new BridgeController(config, _logger, _tokenProvider, _runtimeRegistry, taskManager, rcProcessManager);
         _controller.Start();
 
         _httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };

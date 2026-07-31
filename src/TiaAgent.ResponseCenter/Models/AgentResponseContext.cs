@@ -39,6 +39,9 @@ public sealed record AgentResponseContext
     /// <summary>Stage from the Bridge (if task was already accepted).</summary>
     public string? InitialStage { get; init; }
 
+    /// <summary>TIA Portal instance identifier for single-instance tracking.</summary>
+    public string? TiaInstanceId { get; init; }
+
     /// <summary>User-friendly action description.</summary>
     public string ActionDisplay => Action switch
     {

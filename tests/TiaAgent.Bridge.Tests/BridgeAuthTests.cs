@@ -158,7 +158,8 @@ public class BridgeAuthTests : IDisposable
         runtimeRegistry.Register(new FakeRuntime("test", "Test Runtime"));
         var taskManager = new TaskManager(runtimeRegistry, 4, logger);
 
-        _controller = new BridgeController(config, logger, _tokenProvider, runtimeRegistry, taskManager);
+        var rcProcessManager = new TiaAgent.Bridge.ResponseCenter.ResponseCenterProcessManager(logger);
+        _controller = new BridgeController(config, logger, _tokenProvider, runtimeRegistry, taskManager, rcProcessManager);
         _controller.Start();
 
         _httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };

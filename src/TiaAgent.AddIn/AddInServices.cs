@@ -16,6 +16,12 @@ public static class AddInServices
     private static readonly object _lock = new();
 
     /// <summary>
+    /// Unique identifier for this TIA Portal instance, generated once at Add-In load time.
+    /// Used to associate Response Center processes with their parent TIA session.
+    /// </summary>
+    public static string TiaInstanceId { get; } = $"tia-{Guid.NewGuid():N}";
+
+    /// <summary>
     /// Bridge client configuration. Loaded lazily from hardcoded defaults.
     /// No file I/O — avoids FileIOPermission in partial-trust sandbox.
     /// </summary>

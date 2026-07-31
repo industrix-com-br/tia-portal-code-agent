@@ -105,36 +105,20 @@ public sealed class TiaAgentContextMenu : ContextMenuAddIn
             AddInLogger.Info(
                 $"Bridge task accepted: taskId={accepted.TaskId}, status={accepted.Status}");
 
-            var objectName = string.IsNullOrWhiteSpace(request.Selection.Name)
-                ? selectionInfo
-                : request.Selection.Name;
-            var objectType = string.IsNullOrWhiteSpace(request.Selection.ObjectType)
-                ? typeName
-                : request.Selection.ObjectType;
-
-            var launchResult = ResponseCenterLauncher.Launch(
-                new ResponseCenterLaunchRequest(
-                    accepted.TaskId,
-                    action,
-                    objectName,
-                    objectType,
-                    request.Selection.PlcName,
-                    request.Project.Name,
-                    correlationId,
-                    accepted.Status,
-                    AddInServices.Config.BridgeBaseUrl));
+            var launchResult = await ResponseCenterLauncher.RequestResponseCenterLaunchAsync(
+                accepted.TaskId,
+                action,
+                CancellationToken.None).ConfigureAwait(false);
 
             if (launchResult.Success)
             {
                 return;
             }
 
-            await CancelAcceptedTaskAsync(accepted.TaskId).ConfigureAwait(false);
-            acceptedTaskId = null;
-
+            AddInLogger.Warn($"Response Center launch failed: status={launchResult.Status}, error={launchResult.ErrorMessage}");
             AddInDialogService.ShowError(
-                "The Agent task was created, but the Response Center could not be opened. " +
-                (launchResult.ErrorMessage ?? "Reinstall or update TIA Agent and try again."));
+                "The Agent task is running, but the Response Center could not be opened. " +
+                (launchResult.ErrorMessage ?? "Check the Agent logs for details."));
         }
         catch (Exception ex)
         {

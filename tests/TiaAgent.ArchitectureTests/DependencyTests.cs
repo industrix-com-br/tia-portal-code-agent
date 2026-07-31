@@ -176,4 +176,30 @@ public class DependencyTests
         targetFramework?.FrameworkName.Should().Contain("NET",
             "TiaAgent.Cli should target .NET 8");
     }
+
+    [Fact]
+    public void AddIn_ShouldNotLaunchProcesses()
+    {
+        var assembly = LoadAddInAssembly();
+
+        // Verify the ResponseCenterLauncher type exists
+        var launcherType = assembly.GetType("TiaAgent.AddIn.Ui.ResponseCenterLauncher");
+        launcherType.Should().NotBeNull("ResponseCenterLauncher should exist in the AddIn assembly");
+
+        // Verify the old Launch method that used Process.Start no longer exists
+        var oldLaunchMethod = launcherType!.GetMethod("Launch",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        oldLaunchMethod.Should().BeNull(
+            "ResponseCenterLauncher.Launch (which used Process.Start) must be removed");
+
+        // Verify the new async method exists
+        var newMethod = launcherType.GetMethod("RequestResponseCenterLaunchAsync",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        newMethod.Should().NotBeNull(
+            "ResponseCenterLauncher.RequestResponseCenterLaunchAsync should exist");
+
+        // Verify the return type is a Task (async, not synchronous process launch)
+        newMethod!.ReturnType.Should().BeAssignableTo<System.Threading.Tasks.Task>(
+            "RequestResponseCenterLaunchAsync should be async (return Task)");
+    }
 }
