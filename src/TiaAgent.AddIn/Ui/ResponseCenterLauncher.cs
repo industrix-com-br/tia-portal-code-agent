@@ -37,7 +37,7 @@ internal static class ResponseCenterLauncher
         "\\\"activeVersion\\\"\\s*:\\s*\\\"(?<version>[^\\\"]+)\\\"",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public static async Task<ResponseCenterLaunchResult> RequestResponseCenterLaunchAsync(
+    public static Task<ResponseCenterLaunchResult> RequestResponseCenterLaunchAsync(
         string taskId,
         string action,
         CancellationToken cancellationToken)
@@ -47,19 +47,42 @@ internal static class ResponseCenterLauncher
         if (string.IsNullOrWhiteSpace(action))
             throw new ArgumentNullException(nameof(action));
 
+#if SIEMENS
+        return RequestResponseCenterLaunchCoreAsync(
+            taskId,
+            action,
+            global::TiaAgent.AddIn.AddInServices.TiaInstanceId,
+            global::TiaAgent.AddIn.AddInServices.BridgeClient,
+            cancellationToken);
+#else
+        return Task.FromResult(new ResponseCenterLaunchResult(
+            false,
+            ResponseCenterLaunchStatus.StartupFailure,
+            "Response Center launch is available only in a Siemens-enabled Add-In build.",
+            false));
+#endif
+    }
+
+    private static async Task<ResponseCenterLaunchResult> RequestResponseCenterLaunchCoreAsync(
+        string taskId,
+        string action,
+        string tiaInstanceId,
+        IAgentBridgeClient bridgeClient,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var request = new LaunchResponseCenterRequest
             {
                 TaskId = taskId,
-                TiaInstanceId = GetCurrentTiaInstanceId(),
+                TiaInstanceId = tiaInstanceId,
                 Action = action
             };
 
             AddInLogger.Info(
                 $"Requesting Bridge to launch Response Center: taskId={taskId}, action={action}");
 
-            var response = await global::TiaAgent.AddIn.AddInServices.BridgeClient
+            var response = await bridgeClient
                 .LaunchResponseCenterAsync(request, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -94,11 +117,6 @@ internal static class ResponseCenterLauncher
                 ex.Message,
                 false);
         }
-    }
-
-    private static string GetCurrentTiaInstanceId()
-    {
-        return global::TiaAgent.AddIn.AddInServices.TiaInstanceId;
     }
 
     internal static string ResolveExecutablePath(string? installationRoot = null)
