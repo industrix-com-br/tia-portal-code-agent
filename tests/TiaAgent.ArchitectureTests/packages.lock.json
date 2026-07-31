@@ -139,19 +139,19 @@
       "tiaagent.application": {
         "type": "Project",
         "dependencies": {
-          "TiaAgent.Contracts": "[0.0.0-dev, )"
+          "TiaAgent.Contracts": "[0.3.2-beta.4, )"
         }
       },
       "tiaagent.bridge": {
         "type": "Project",
         "dependencies": {
-          "TiaAgent.Contracts": "[0.0.0-dev, )"
+          "TiaAgent.Contracts": "[0.3.2-beta.4, )"
         }
       },
       "tiaagent.cli": {
         "type": "Project",
         "dependencies": {
-          "TiaAgent.Contracts": "[0.0.0-dev, )"
+          "TiaAgent.Contracts": "[0.3.2-beta.4, )"
         }
       },
       "tiaagent.contracts": {

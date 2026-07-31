@@ -6,4 +6,5 @@ public interface IAgentBridgeClient
     Task<BridgeTaskAccepted> StartTaskAsync(BridgeTaskRequest request, CancellationToken cancellationToken);
     Task<BridgeTaskStatus> GetTaskAsync(string taskId, CancellationToken cancellationToken);
     Task CancelTaskAsync(string taskId, CancellationToken cancellationToken);
+    Task<LaunchResponseCenterResponse> LaunchResponseCenterAsync(LaunchResponseCenterRequest request, CancellationToken cancellationToken);
 }

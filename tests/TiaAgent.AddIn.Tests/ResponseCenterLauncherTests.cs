@@ -41,25 +41,36 @@ public sealed class ResponseCenterLauncherTests : IDisposable
     }
 
     [Fact]
-    public void BuildArguments_QuotesMetadata_AndDoesNotExposeToken()
+    public void ParseActiveVersion_ReturnsNull_WhenEmpty()
     {
-        var request = new ResponseCenterLaunchRequest(
-            "task-1",
-            "review",
-            "Main block \"A\"",
-            "Organization Block",
-            "PLC 1",
-            "Demo Project",
-            "tia-correlation",
-            "pending",
-            "http://127.0.0.1:43119");
+        ResponseCenterLauncher.ParseActiveVersion("").Should().BeNull();
+        ResponseCenterLauncher.ParseActiveVersion(null!).Should().BeNull();
+    }
 
-        var arguments = ResponseCenterLauncher.BuildArguments(request);
+    [Fact]
+    public void ParseActiveVersion_ReturnsNull_WhenMissing()
+    {
+        ResponseCenterLauncher.ParseActiveVersion("{\"schemaVersion\":1}").Should().BeNull();
+    }
 
-        arguments.Should().Contain("--task-id \"task-1\"");
-        arguments.Should().Contain("--object-name \"Main block \\\"A\\\"\"");
-        arguments.Should().Contain("--bridge-url \"http://127.0.0.1:43119\"");
-        arguments.ToLowerInvariant().Should().NotContain("token");
+    [Fact]
+    public void ResolveExecutablePath_Throws_WhenManifestMissing()
+    {
+        var nonExistent = Path.Combine(_root, "no-such-dir");
+        Action act = () => ResponseCenterLauncher.ResolveExecutablePath(nonExistent);
+        act.Should().Throw<FileNotFoundException>();
+    }
+
+    [Fact]
+    public void ResolveExecutablePath_Throws_WhenActiveVersionMissing()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(
+            Path.Combine(_root, "current.json"),
+            "{\"schemaVersion\":1}");
+
+        Action act = () => ResponseCenterLauncher.ResolveExecutablePath(_root);
+        act.Should().Throw<InvalidDataException>();
     }
 
     public void Dispose()

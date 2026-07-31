@@ -7,6 +7,10 @@ namespace TiaAgent.AddIn.Bridge;
 /// Configuration for the Bridge HTTP client.
 /// Discovers the Bridge port and auth token from the runtime manifest
 /// and token file written by the supervisor.
+///
+/// The Bridge URL is re-read from the manifest on each access so that
+/// a Bridge restart on a different port is picked up without requiring
+/// a TIA Portal restart.
 /// </summary>
 public sealed class AddInConfig
 {
@@ -20,15 +24,16 @@ public sealed class AddInConfig
     private static readonly string TokenFilePath = Path.Combine(
         Path.GetDirectoryName(RuntimeDir)!, "bridge.token");
 
-    public string BridgeBaseUrl { get; set; } = "http://127.0.0.1:43119";
+    private const string DefaultBridgeBaseUrl = "http://127.0.0.1:43119";
+
+    public string BridgeBaseUrl => DiscoverBridgeBaseUrl();
     public int RequestTimeoutSeconds { get; set; } = 15;
     public int PollingIntervalMilliseconds { get; set; } = 500;
     public int TaskTimeoutSeconds { get; set; } = 300;
-    public string? AuthToken { get; set; }
+    public string? AuthToken => DiscoverAuthToken();
 
-    public AddInConfig()
+    private static string DiscoverBridgeBaseUrl()
     {
-        // Try to discover Bridge port from runtime manifest
         try
         {
             if (File.Exists(RuntimeManifestPath))
@@ -37,7 +42,7 @@ public sealed class AddInConfig
                 var port = ExtractPort(json);
                 if (port > 0)
                 {
-                    BridgeBaseUrl = $"http://127.0.0.1:{port}";
+                    return $"http://127.0.0.1:{port}";
                 }
             }
         }
@@ -46,7 +51,11 @@ public sealed class AddInConfig
             // File I/O may be restricted in sandbox — use default port
         }
 
-        // Try to discover auth token from token file
+        return DefaultBridgeBaseUrl;
+    }
+
+    private static string? DiscoverAuthToken()
+    {
         try
         {
             if (File.Exists(TokenFilePath))
@@ -54,7 +63,7 @@ public sealed class AddInConfig
                 var token = File.ReadAllText(TokenFilePath).Trim();
                 if (!string.IsNullOrEmpty(token))
                 {
-                    AuthToken = token;
+                    return token;
                 }
             }
         }
@@ -62,6 +71,8 @@ public sealed class AddInConfig
         {
             // File I/O may be restricted in sandbox — requests will fail with 401
         }
+
+        return null;
     }
 
     private static int ExtractPort(string json)
