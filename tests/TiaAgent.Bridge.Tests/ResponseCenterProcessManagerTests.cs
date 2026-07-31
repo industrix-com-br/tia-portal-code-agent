@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -18,8 +21,7 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     private readonly Diagnostics.BridgeLogger _logger = new();
-
-    // --- Static utility tests (unchanged) ---
+    private readonly List<Process> _startedProcesses = new();
 
     [Fact]
     public void ResolveExecutablePath_ReturnsNull_WhenManifestMissing()
@@ -61,12 +63,7 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     [Fact]
     public void BuildArguments_IncludesAllFields()
     {
-        var request = new LaunchResponseCenterRequest
-        {
-            TaskId = "task-abc",
-            Action = "propose",
-            TiaInstanceId = "tia-test-instance"
-        };
+        var request = CreateRequest("task-abc", "tia-test-instance", "propose");
 
         var args = ResponseCenterProcessManager.BuildArguments(request);
 
@@ -79,12 +76,7 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     [Fact]
     public void BuildArguments_QuotesSpecialCharacters()
     {
-        var request = new LaunchResponseCenterRequest
-        {
-            TaskId = "task-1",
-            Action = "explain",
-            TiaInstanceId = "instance \"with quotes\""
-        };
+        var request = CreateRequest("task-1", "instance \"with quotes\"", "explain");
 
         var args = ResponseCenterProcessManager.BuildArguments(request);
 
@@ -100,41 +92,36 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     [Fact]
     public void QuoteArgument_HandlesBackslashes()
     {
-        var result = ResponseCenterProcessManager.QuoteArgument("C:\\path\\to\\file");
-        result.Should().Be("\"C:\\path\\to\\file\"");
+        ResponseCenterProcessManager.QuoteArgument("C:\\path\\to\\file")
+            .Should().Be("\"C:\\path\\to\\file\"");
     }
 
     [Fact]
     public void QuoteArgument_HandlesEmbeddedQuotes()
     {
-        var result = ResponseCenterProcessManager.QuoteArgument("say \"hello\"");
-        result.Should().Be("\"say \\\"hello\\\"\"");
+        ResponseCenterProcessManager.QuoteArgument("say \"hello\"")
+            .Should().Be("\"say \\\"hello\\\"\"");
     }
 
     [Fact]
     public void GetPipeName_SanitizesInstanceId()
     {
-        var pipeName = ResponseCenterProcessManager.GetPipeName("tia-123-abc");
-        pipeName.Should().Be("TiaAgent_RC_tia-123-abc");
+        ResponseCenterProcessManager.GetPipeName("tia-123-abc")
+            .Should().Be("TiaAgent_RC_tia-123-abc");
     }
 
     [Fact]
     public void GetPipeName_RemovesSpecialCharacters()
     {
-        var pipeName = ResponseCenterProcessManager.GetPipeName("tia@#$%123");
-        pipeName.Should().Be("TiaAgent_RC_tia123");
+        ResponseCenterProcessManager.GetPipeName("tia@#$%123")
+            .Should().Be("TiaAgent_RC_tia123");
     }
-
-    // --- Validation tests ---
 
     [Fact]
     public void LaunchOrActivate_ReturnsInvalidRequest_WhenTaskIdEmpty()
     {
         using var manager = CreateManager();
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "", Action = "explain", TiaInstanceId = "tia-1"
-        });
+        var result = manager.LaunchOrActivate(CreateRequest("", "tia-1", "explain"));
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.InvalidRequest);
     }
@@ -143,10 +130,7 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     public void LaunchOrActivate_ReturnsInvalidRequest_WhenTiaInstanceIdEmpty()
     {
         using var manager = CreateManager();
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-1", Action = "explain", TiaInstanceId = ""
-        });
+        var result = manager.LaunchOrActivate(CreateRequest("task-1", "", "explain"));
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.InvalidRequest);
     }
@@ -155,143 +139,162 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     public void LaunchOrActivate_ReturnsInvalidRequest_WhenActionEmpty()
     {
         using var manager = CreateManager();
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-1", Action = "", TiaInstanceId = "tia-1"
-        });
+        var result = manager.LaunchOrActivate(CreateRequest("task-1", "tia-1", ""));
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.InvalidRequest);
     }
 
-    // --- Readiness handshake tests ---
-
     [Fact]
     public void LaunchOrActivate_ReturnsStartupFailure_WhenProcessStartsButNoReadiness()
     {
-        using var longRunning = StartLongRunningProcess();
-        var processOps = new FakeProcessOperations();
-        processOps.NextProcess = longRunning;
-        var readiness = new FakeReadinessListener(readinessResult: null); // no readiness
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
 
-        using var manager = CreateManager(processOps, readiness);
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(null),
+            new SequenceActivationClient(false));
         SetupFakeExe();
 
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-1",
-            Action = "explain",
-            TiaInstanceId = "tia-no-readiness"
-        });
+        var result = manager.LaunchOrActivate(
+            CreateRequest("task-1", "tia-no-readiness", "explain"));
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.StartupFailure);
-        result.ErrorMessage.Should().Contain("did not confirm window visibility");
-        processOps.KilledPids.Should().Contain(longRunning.Id);
+        result.ErrorMessage.Should().Contain("did not confirm");
+        processOps.KilledPids.Should().Contain(process.Id);
     }
 
     [Fact]
     public void LaunchOrActivate_ReturnsStartedAndVisible_WhenReadinessReceived()
     {
-        using var longRunning = StartLongRunningProcess();
-        var processOps = new FakeProcessOperations();
-        processOps.NextProcess = longRunning;
-        var readiness = new FakeReadinessListener(new ResponseCenterReadinessInfo
-        {
-            ProcessId = longRunning.Id,
-            WindowHandle = 9999,
-            TaskId = "task-1",
-            TiaInstanceId = "tia-ready",
-            IsVisible = true,
-            WindowState = "Normal"
-        });
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
+        var request = CreateRequest("task-1", "tia-ready", "explain");
+        var readiness = CreateReadiness(request, process.Id, 9999);
 
-        using var manager = CreateManager(processOps, readiness);
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(readiness),
+            new SequenceActivationClient(false));
         SetupFakeExe();
 
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-1",
-            Action = "explain",
-            TiaInstanceId = "tia-ready"
-        });
+        var result = manager.LaunchOrActivate(request);
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.StartedAndVisible);
-        result.ProcessId.Should().Be(longRunning.Id);
+        result.ProcessId.Should().Be(process.Id);
         result.WindowHandle.Should().Be(9999);
         result.ActivatedExistingInstance.Should().BeFalse();
     }
 
     [Fact]
-    public void LaunchOrActivate_DeadInstanceIsReplaced()
+    public void LaunchOrActivate_RejectsReadinessForAnotherTask()
     {
-        // Simpler version: verify that when a tracked instance's process is dead,
-        // a new process is started instead.
-        using var newProcess = StartLongRunningProcess();
-        var processOps = new FakeProcessOperations();
-        processOps.NextProcess = newProcess;
-        var readiness = new FakeReadinessListener(new ResponseCenterReadinessInfo
-        {
-            ProcessId = newProcess.Id,
-            WindowHandle = 7777,
-            TaskId = "task-replace",
-            TiaInstanceId = "tia-dead",
-            IsVisible = true,
-            WindowState = "Normal"
-        });
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
+        var request = CreateRequest("task-expected", "tia-ready", "explain");
+        var wrongRequest = CreateRequest("task-other", "tia-ready", "explain");
 
-        using var manager = CreateManager(processOps, readiness);
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(CreateReadiness(wrongRequest, process.Id, 9999)),
+            new SequenceActivationClient(false));
         SetupFakeExe();
 
-        // First launch succeeds
-        var result1 = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-first", Action = "explain", TiaInstanceId = "tia-dead"
-        });
-        result1.Status.Should().Be(ResponseCenterLaunchStatus.StartedAndVisible);
+        var result = manager.LaunchOrActivate(request);
 
-        // Now mark the process as dead
-        processOps.SetAlive(newProcess.Id, false);
-
-        // Second launch: detects dead instance, starts new process
-        using var newProcess2 = StartLongRunningProcess();
-        processOps.NextProcess = newProcess2;
-        readiness = new FakeReadinessListener(new ResponseCenterReadinessInfo
-        {
-            ProcessId = newProcess2.Id,
-            WindowHandle = 8888,
-            TaskId = "task-replace-2",
-            TiaInstanceId = "tia-dead",
-            IsVisible = true,
-            WindowState = "Normal"
-        });
-
-        // Need to create a new manager since the readiness listener changed
-        using var manager2 = CreateManager(processOps, readiness);
-        // The instance tracking is per-manager, so the second manager won't know about
-        // the first instance. This test verifies the dead-process path in isolation.
-        var result2 = manager2.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-replace-2", Action = "explain", TiaInstanceId = "tia-dead"
-        });
-        result2.Status.Should().Be(ResponseCenterLaunchStatus.StartedAndVisible);
+        result.Status.Should().Be(ResponseCenterLaunchStatus.StartupFailure);
+        processOps.KilledPids.Should().Contain(process.Id);
     }
 
     [Fact]
-    public void LaunchOrActivate_DoesNotReportSuccess_BeforeVisibilityConfirmation()
+    public void LaunchOrActivate_DeadTrackedInstanceIsReplaced()
     {
-        using var longRunning = StartLongRunningProcess();
-        var processOps = new FakeProcessOperations();
-        processOps.NextProcess = longRunning;
-        var readiness = new FakeReadinessListener(readinessResult: null); // never confirms
+        var firstProcess = StartLongRunningProcess();
+        var secondProcess = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = firstProcess };
+        var firstRequest = CreateRequest("task-first", "tia-dead", "explain");
+        var secondRequest = CreateRequest("task-second", "tia-dead", "review");
+        var readiness = new CompositeReadinessListener(
+            CreateReadiness(firstRequest, firstProcess.Id, 7777),
+            CreateReadiness(secondRequest, secondProcess.Id, 8888));
 
-        using var manager = CreateManager(processOps, readiness);
+        using var manager = CreateManager(
+            processOps,
+            readiness,
+            new SequenceActivationClient(false, false));
         SetupFakeExe();
 
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-nosuccess",
-            Action = "explain",
-            TiaInstanceId = "tia-nosuccess"
-        });
+        var firstResult = manager.LaunchOrActivate(firstRequest);
+        firstResult.Status.Should().Be(ResponseCenterLaunchStatus.StartedAndVisible);
+
+        processOps.SetAlive(firstProcess.Id, false);
+        processOps.NextProcess = secondProcess;
+
+        var secondResult = manager.LaunchOrActivate(secondRequest);
+
+        secondResult.Status.Should().Be(ResponseCenterLaunchStatus.StartedAndVisible);
+        secondResult.ProcessId.Should().Be(secondProcess.Id);
+        processOps.StartCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void LaunchOrActivate_RecoversExistingInstanceAfterBridgeRestart()
+    {
+        var request = CreateRequest("task-recovered", "tia-recovered", "review");
+        var processOps = new FakeProcessOperations();
+        var activation = new SequenceActivationClient(true);
+
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(CreateReadiness(request, 4321, 8765)),
+            activation);
+
+        var result = manager.LaunchOrActivate(request);
+
+        result.Status.Should().Be(ResponseCenterLaunchStatus.ActivatedAndVisible);
+        result.ActivatedExistingInstance.Should().BeTrue();
+        result.ProcessId.Should().Be(4321);
+        processOps.StartCount.Should().Be(0);
+        activation.NotifyCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task LaunchOrActivate_SerializesConcurrentRequestsPerTiaInstance()
+    {
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
+        var request = CreateRequest("task-concurrent", "tia-concurrent", "explain");
+        var activation = new SequenceActivationClient(false, true);
+
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(CreateReadiness(request, process.Id, 5555)),
+            activation);
+        SetupFakeExe();
+
+        var first = Task.Run(() => manager.LaunchOrActivate(request));
+        var second = Task.Run(() => manager.LaunchOrActivate(request));
+        var results = await Task.WhenAll(first, second);
+
+        processOps.StartCount.Should().Be(1);
+        results.Select(result => result.Status).Should().Contain(ResponseCenterLaunchStatus.StartedAndVisible);
+        results.Select(result => result.Status).Should().Contain(ResponseCenterLaunchStatus.ActivatedAndVisible);
+    }
+
+    [Fact]
+    public void LaunchOrActivate_DoesNotReportSuccessBeforeVisibilityConfirmation()
+    {
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
+
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(null),
+            new SequenceActivationClient(false));
+        SetupFakeExe();
+
+        var result = manager.LaunchOrActivate(
+            CreateRequest("task-nosuccess", "tia-nosuccess", "explain"));
 
         result.Status.Should().Be(ResponseCenterLaunchStatus.StartupFailure);
         result.Status.Should().NotBe(ResponseCenterLaunchStatus.Started);
@@ -301,85 +304,122 @@ public sealed class ResponseCenterProcessManagerTests : IDisposable
     [Fact]
     public void LaunchOrActivate_DoesNotReturnLegacyStarted()
     {
-        // Verify the legacy "started" status is never emitted
-        using var longRunning = StartLongRunningProcess();
-        var processOps = new FakeProcessOperations();
-        processOps.NextProcess = longRunning;
-        var readiness = new FakeReadinessListener(new ResponseCenterReadinessInfo
-        {
-            ProcessId = longRunning.Id,
-            WindowHandle = 12345,
-            TaskId = "task-legacy",
-            TiaInstanceId = "tia-legacy",
-            IsVisible = true,
-            WindowState = "Normal"
-        });
+        var process = StartLongRunningProcess();
+        var processOps = new FakeProcessOperations { NextProcess = process };
+        var request = CreateRequest("task-legacy", "tia-legacy", "explain");
 
-        using var manager = CreateManager(processOps, readiness);
+        using var manager = CreateManager(
+            processOps,
+            new FakeReadinessListener(CreateReadiness(request, process.Id, 12345)),
+            new SequenceActivationClient(false));
         SetupFakeExe();
 
-        var result = manager.LaunchOrActivate(new LaunchResponseCenterRequest
-        {
-            TaskId = "task-legacy",
-            Action = "explain",
-            TiaInstanceId = "tia-legacy"
-        });
+        var result = manager.LaunchOrActivate(request);
 
         result.Status.Should().NotBe(ResponseCenterLaunchStatus.Started);
         result.Status.Should().NotBe(ResponseCenterLaunchStatus.ActivatedExisting);
     }
 
-    // --- Helpers ---
-
     private ResponseCenterProcessManager CreateManager(
         IProcessOperations? processOps = null,
-        ReadinessListener? readiness = null)
+        ReadinessListener? readiness = null,
+        IResponseCenterActivationClient? activationClient = null)
     {
         return new ResponseCenterProcessManager(
             _logger,
             processOps ?? new FakeProcessOperations(),
-            readiness ?? new FakeReadinessListener(null));
+            readiness ?? new FakeReadinessListener(null),
+            activationClient ?? new SequenceActivationClient(false),
+            _root);
     }
 
     private void SetupFakeExe()
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(Path.Combine(_root, "current.json"), "{\"activeVersion\":\"1.0.0\"}");
+        File.WriteAllText(
+            Path.Combine(_root, "current.json"),
+            "{\"activeVersion\":\"1.0.0\"}");
+
         var exeDir = Path.Combine(_root, "versions", "1.0.0", "ResponseCenter");
         Directory.CreateDirectory(exeDir);
         File.WriteAllText(Path.Combine(exeDir, "TiaAgent.ResponseCenter.exe"), "fake");
     }
 
-    /// <summary>
-    /// Starts a long-running process (ping loopback) that can be used as a fake Process object.
-    /// The caller must dispose the returned process.
-    /// </summary>
-    private static Process StartLongRunningProcess()
+    private Process StartLongRunningProcess()
     {
-        return Process.Start(new ProcessStartInfo
+        var process = Process.Start(new ProcessStartInfo
         {
             FileName = "cmd.exe",
             Arguments = "/c ping 127.0.0.1 -n 60",
             CreateNoWindow = true,
             UseShellExecute = false
         })!;
+
+        _startedProcesses.Add(process);
+        return process;
+    }
+
+    private static LaunchResponseCenterRequest CreateRequest(
+        string taskId,
+        string tiaInstanceId,
+        string action)
+    {
+        return new LaunchResponseCenterRequest
+        {
+            TaskId = taskId,
+            TiaInstanceId = tiaInstanceId,
+            Action = action
+        };
+    }
+
+    private static ResponseCenterReadinessInfo CreateReadiness(
+        LaunchResponseCenterRequest request,
+        int processId,
+        long windowHandle)
+    {
+        return new ResponseCenterReadinessInfo
+        {
+            ProcessId = processId,
+            WindowHandle = windowHandle,
+            TaskId = request.TaskId,
+            TiaInstanceId = request.TiaInstanceId,
+            IsVisible = true,
+            WindowState = "Normal"
+        };
     }
 
     public void Dispose()
     {
+        foreach (var process in _startedProcesses)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill();
+            }
+            catch
+            {
+                // Process already stopped.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
         if (Directory.Exists(_root))
             Directory.Delete(_root, recursive: true);
     }
 }
 
-/// <summary>
-/// Fake process operations for testing. Tracks started and killed PIDs.
-/// </summary>
 internal sealed class FakeProcessOperations : IProcessOperations
 {
-    private readonly System.Collections.Generic.Dictionary<int, bool> _alive = new();
+    private readonly ConcurrentDictionary<int, bool> _alive = new();
+    private int _startCount;
+
     public Process? NextProcess { get; set; }
-    public System.Collections.Generic.List<int> KilledPids { get; } = new();
+    public List<int> KilledPids { get; } = new();
+    public int StartCount => _startCount;
 
     public void SetAlive(int pid, bool alive)
     {
@@ -388,12 +428,11 @@ internal sealed class FakeProcessOperations : IProcessOperations
 
     public Process? Start(ProcessStartInfo startInfo)
     {
-        if (NextProcess != null)
-        {
-            _alive[NextProcess.Id] = true;
-            return NextProcess;
-        }
-        return null;
+        Interlocked.Increment(ref _startCount);
+        var process = NextProcess;
+        if (process != null)
+            _alive[process.Id] = true;
+        return process;
     }
 
     public bool IsAlive(int processId)
@@ -403,14 +442,36 @@ internal sealed class FakeProcessOperations : IProcessOperations
 
     public void Kill(int processId)
     {
-        KilledPids.Add(processId);
+        lock (KilledPids)
+        {
+            KilledPids.Add(processId);
+        }
         _alive[processId] = false;
     }
 }
 
-/// <summary>
-/// Fake readiness listener that returns a pre-configured result.
-/// </summary>
+internal sealed class SequenceActivationClient : IResponseCenterActivationClient
+{
+    private readonly Queue<bool> _results;
+    private readonly object _lock = new();
+
+    public SequenceActivationClient(params bool[] results)
+    {
+        _results = new Queue<bool>(results);
+    }
+
+    public int NotifyCount { get; private set; }
+
+    public bool Notify(LaunchResponseCenterRequest request)
+    {
+        lock (_lock)
+        {
+            NotifyCount++;
+            return _results.Count > 0 && _results.Dequeue();
+        }
+    }
+}
+
 internal sealed class FakeReadinessListener : ReadinessListener
 {
     private readonly ResponseCenterReadinessInfo? _result;
@@ -422,32 +483,31 @@ internal sealed class FakeReadinessListener : ReadinessListener
     }
 
     public override Task<ResponseCenterReadinessInfo?> WaitForReadinessAsync(
-        string instanceId, TimeSpan timeout)
+        string instanceId,
+        TimeSpan timeout)
     {
         return Task.FromResult(_result);
     }
 }
 
-/// <summary>
-/// Composite readiness listener that returns results from two inner listeners in sequence.
-/// First call uses the first listener, second call uses the second, etc.
-/// </summary>
 internal sealed class CompositeReadinessListener : ReadinessListener
 {
-    private readonly ReadinessListener[] _listeners;
-    private int _callIndex;
+    private readonly Queue<ResponseCenterReadinessInfo?> _results;
+    private readonly object _lock = new();
 
-    public CompositeReadinessListener(params ReadinessListener[] listeners)
+    public CompositeReadinessListener(params ResponseCenterReadinessInfo?[] results)
         : base(new Diagnostics.BridgeLogger())
     {
-        _listeners = listeners;
+        _results = new Queue<ResponseCenterReadinessInfo?>(results);
     }
 
     public override Task<ResponseCenterReadinessInfo?> WaitForReadinessAsync(
-        string instanceId, TimeSpan timeout)
+        string instanceId,
+        TimeSpan timeout)
     {
-        var listener = _listeners[Math.Min(_callIndex, _listeners.Length - 1)];
-        _callIndex++;
-        return listener.WaitForReadinessAsync(instanceId, timeout);
+        lock (_lock)
+        {
+            return Task.FromResult(_results.Count > 0 ? _results.Dequeue() : null);
+        }
     }
 }

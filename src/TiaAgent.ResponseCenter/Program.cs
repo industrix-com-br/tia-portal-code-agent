@@ -1,8 +1,8 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Threading;
 using TiaAgent.ResponseCenter.Diagnostics;
 using TiaAgent.ResponseCenter.Models;
 using TiaAgent.ResponseCenter.Services;
@@ -38,18 +38,21 @@ public static class Program
                 $"Arguments parsed: taskId={context.TaskId}, action={context.Action}, " +
                 $"tiaInstance={context.TiaInstanceId}");
 
-            var mutexName = $"TiaAgent_ResponseCenter_{context.TaskId}";
+            var mutexName = BuildMutexName(context);
             using var mutex = new Mutex(true, mutexName, out var createdNew);
 
             if (!createdNew)
             {
-                ResponseCenterLogger.Info("Another instance already owns this task — exiting");
+                ResponseCenterLogger.Info(
+                    $"Another Response Center already owns '{mutexName}'; exiting duplicate process");
                 return 0;
             }
 
+            ResponseCenterLogger.Info($"Single-instance mutex acquired: {mutexName}");
             ResponseCenterLogger.Info("Application created");
             var app = new Application();
             RegisterGlobalExceptionHandlers();
+
             var monitor = new BridgeTaskMonitor(context);
             var viewModel = new AgentResponseViewModel(context, monitor);
             ResponseCenterLogger.Info("ViewModel created");
@@ -61,20 +64,41 @@ public static class Program
             };
             ResponseCenterLogger.Info("AgentResponseWindow constructor completed");
 
-            // Set up named pipe listener for new task notifications from the Bridge.
-            // Must be after window creation so the lambda can capture it.
             ResponseCenterPipeListener? pipeListener = null;
             if (!string.IsNullOrEmpty(context.TiaInstanceId))
             {
                 pipeListener = new ResponseCenterPipeListener(context.TiaInstanceId);
-                pipeListener.NewTaskRequested += taskId =>
+                pipeListener.NewTaskRequested += request =>
                 {
-                    ResponseCenterLogger.Info($"Activation request received via pipe: taskId={taskId}");
+                    ResponseCenterLogger.Info(
+                        $"Activation request received via pipe: taskId={request.TaskId}, action={request.Action}");
+
+                    AgentResponseContext? activationContext = null;
                     window.Dispatcher.Invoke(() =>
                     {
-                        ResponseCenterLogger.Info("Existing window restored");
-                        window.Show();
+                        var nextContext = context with
+                        {
+                            TaskId = request.TaskId,
+                            Action = request.Action,
+                            TiaInstanceId = request.TiaInstanceId,
+                            ObjectName = string.Empty,
+                            ObjectType = string.Empty,
+                            PlcName = null,
+                            ProjectName = null,
+                            CorrelationId = null,
+                            InitialStatus = null,
+                            InitialStage = null
+                        };
 
+                        activationContext = nextContext;
+                        var nextMonitor = new BridgeTaskMonitor(nextContext);
+                        var nextViewModel = new AgentResponseViewModel(nextContext, nextMonitor);
+
+                        window.SwitchViewModel(nextViewModel);
+                        window.Title = $"TIA Agent - {nextContext.ActionDisplay}";
+                        nextViewModel.StartMonitoring();
+
+                        window.Show();
                         if (window.WindowState == WindowState.Minimized)
                         {
                             window.WindowState = WindowState.Normal;
@@ -83,21 +107,28 @@ public static class Program
 
                         window.Activate();
                         window.Focus();
-                        ResponseCenterLogger.Info("Existing window activated");
+                        ResponseCenterLogger.Info(
+                            $"Existing window switched and activated for taskId={request.TaskId}");
                     });
 
-                    // Send readiness for the activation too, so the Bridge can confirm visibility.
-                    var activationContext = context with { TaskId = taskId };
+                    var readyContext = activationContext;
+                    if (readyContext == null)
+                        return;
+
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await ReadinessReporter.SendReadinessAsync(activationContext, window, TimeSpan.FromSeconds(5))
+                            await ReadinessReporter.SendReadinessAsync(
+                                    readyContext,
+                                    window,
+                                    TimeSpan.FromSeconds(5))
                                 .ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
-                            ResponseCenterLogger.Warn($"Activation readiness send failed: {ex.Message}");
+                            ResponseCenterLogger.Warn(
+                                $"Activation readiness send failed: {ex.Message}");
                         }
                     });
                 };
@@ -111,13 +142,14 @@ public static class Program
             window.Focus();
             ResponseCenterLogger.Info("Window activated and focused");
 
-            // Send readiness to the Bridge after the window is visible.
-            // Fire-and-forget: this must not block the WPF message pump.
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await ReadinessReporter.SendReadinessAsync(context, window, TimeSpan.FromSeconds(5))
+                    await ReadinessReporter.SendReadinessAsync(
+                            context,
+                            window,
+                            TimeSpan.FromSeconds(5))
                         .ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -143,6 +175,24 @@ public static class Program
                 MessageBoxImage.Error);
             return 1;
         }
+    }
+
+    public static string BuildMutexName(AgentResponseContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var identity = string.IsNullOrWhiteSpace(context.TiaInstanceId)
+            ? context.TaskId
+            : context.TiaInstanceId;
+
+        var sanitized = new string(identity
+            .Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '-')
+            .ToArray());
+
+        if (string.IsNullOrWhiteSpace(sanitized))
+            sanitized = "default";
+
+        return $"TiaAgent_ResponseCenter_{sanitized}";
     }
 
     private static void RegisterGlobalExceptionHandlers()

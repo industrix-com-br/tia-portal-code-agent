@@ -4,8 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
 using TiaAgent.Bridge.Diagnostics;
 using TiaAgent.Contracts.Bridge;
 
@@ -51,7 +51,55 @@ public sealed class DefaultProcessOperations : IProcessOperations
         }
         catch
         {
-            // Process already exited or inaccessible
+            // Process already exited or inaccessible.
+        }
+    }
+}
+
+/// <summary>
+/// Sends activation requests to an already running Response Center instance.
+/// </summary>
+public interface IResponseCenterActivationClient
+{
+    bool Notify(LaunchResponseCenterRequest request);
+}
+
+/// <summary>
+/// Named-pipe implementation used by the Bridge in production.
+/// </summary>
+public sealed class NamedPipeResponseCenterActivationClient : IResponseCenterActivationClient
+{
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    private readonly BridgeLogger _logger;
+
+    public NamedPipeResponseCenterActivationClient(BridgeLogger logger)
+    {
+        _logger = logger;
+    }
+
+    public bool Notify(LaunchResponseCenterRequest request)
+    {
+        var pipeName = ResponseCenterProcessManager.GetPipeName(request.TiaInstanceId);
+        try
+        {
+            using var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
+            pipeClient.Connect(2000);
+
+            var payload = JsonSerializer.Serialize(request, s_jsonOptions) + "\n";
+            var buffer = Encoding.UTF8.GetBytes(payload);
+            pipeClient.Write(buffer, 0, buffer.Length);
+            pipeClient.Flush();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(
+                $"Named pipe activation failed for {request.TiaInstanceId}: {ex.Message}");
+            return false;
         }
     }
 }
@@ -67,22 +115,34 @@ public sealed class ResponseCenterProcessManager : IDisposable
 
     private readonly BridgeLogger _logger;
     private readonly ConcurrentDictionary<string, ManagedInstance> _instances = new();
+    private readonly ConcurrentDictionary<string, object> _instanceLocks = new();
     private readonly IProcessOperations _processOps;
     private readonly ReadinessListener _readinessListener;
+    private readonly IResponseCenterActivationClient _activationClient;
+    private readonly string? _installationRoot;
 
     public ResponseCenterProcessManager(BridgeLogger logger)
-        : this(logger, new DefaultProcessOperations(), new ReadinessListener(logger))
+        : this(
+            logger,
+            new DefaultProcessOperations(),
+            new ReadinessListener(logger),
+            new NamedPipeResponseCenterActivationClient(logger),
+            null)
     {
     }
 
     public ResponseCenterProcessManager(
         BridgeLogger logger,
         IProcessOperations processOps,
-        ReadinessListener readinessListener)
+        ReadinessListener readinessListener,
+        IResponseCenterActivationClient? activationClient = null,
+        string? installationRoot = null)
     {
         _logger = logger;
         _processOps = processOps;
         _readinessListener = readinessListener;
+        _activationClient = activationClient ?? new NamedPipeResponseCenterActivationClient(logger);
+        _installationRoot = installationRoot;
     }
 
     public ResponseCenterLaunchResult LaunchOrActivate(LaunchResponseCenterRequest request)
@@ -98,97 +158,106 @@ public sealed class ResponseCenterProcessManager : IDisposable
         if (string.IsNullOrWhiteSpace(request.Action))
             return InvalidRequest("Action is required.");
 
-        // Resolve executable
-        string? executablePath;
-        try
+        var instanceLock = _instanceLocks.GetOrAdd(request.TiaInstanceId, _ => new object());
+        lock (instanceLock)
         {
-            executablePath = ResolveExecutablePath();
+            return LaunchOrActivateCore(request);
         }
-        catch (Exception ex)
-        {
-            _logger.Error("Failed to resolve Response Center executable path", ex);
-            return new ResponseCenterLaunchResult
-            {
-                Status = ResponseCenterLaunchStatus.ExecutableNotFound,
-                ErrorMessage = $"Could not resolve Response Center executable: {ex.Message}"
-            };
-        }
-
-        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
-        {
-            _logger.Warn($"Response Center executable not found at '{executablePath}'");
-            return new ResponseCenterLaunchResult
-            {
-                Status = ResponseCenterLaunchStatus.ExecutableNotFound,
-                ErrorMessage = $"Response Center executable was not found at '{executablePath}'. Reinstall or update TIA Agent."
-            };
-        }
-
-        _logger.Info(
-            $"Response Center launch request: taskId={request.TaskId}, tiaInstance={request.TiaInstanceId}, " +
-            $"action={request.Action}, exe={executablePath}");
-
-        // Check for existing instance
-        if (_instances.TryGetValue(request.TiaInstanceId, out var existing))
-        {
-            return HandleExistingInstance(request, existing, executablePath);
-        }
-
-        // Start new process and wait for readiness
-        return StartNewProcess(request, executablePath);
     }
 
-    private ResponseCenterLaunchResult HandleExistingInstance(
-        LaunchResponseCenterRequest request, ManagedInstance existing, string executablePath)
+    private ResponseCenterLaunchResult LaunchOrActivateCore(LaunchResponseCenterRequest request)
     {
-        if (!_processOps.IsAlive(existing.ProcessId))
+        _logger.Info(
+            $"Response Center launch request: taskId={request.TaskId}, tiaInstance={request.TiaInstanceId}, " +
+            $"action={request.Action}");
+
+        var restartingStaleInstance = false;
+
+        if (_instances.TryGetValue(request.TiaInstanceId, out var existing))
         {
-            _logger.Info($"Existing Response Center process {existing.ProcessId} is no longer alive; removing stale entry");
-            _instances.TryRemove(request.TiaInstanceId, out _);
-            return StartNewProcess(request, executablePath);
+            if (_processOps.IsAlive(existing.ProcessId))
+            {
+                var activation = TryActivateExistingInstance(request, existing.ProcessId);
+                if (activation != null)
+                    return activation;
+
+                _logger.Warn(
+                    $"Tracked Response Center pid={existing.ProcessId} did not activate correctly; restarting it");
+                KillAndRemoveInstance(request.TiaInstanceId, existing.ProcessId);
+                restartingStaleInstance = true;
+            }
+            else
+            {
+                _logger.Info(
+                    $"Tracked Response Center process {existing.ProcessId} is no longer alive; removing stale entry");
+                _instances.TryRemove(request.TiaInstanceId, out _);
+            }
         }
+
+        // The Bridge may have restarted while the Response Center stayed alive. Probe the
+        // stable TIA-instance pipe before starting another process so the in-memory registry
+        // can be reconstructed without creating a duplicate window.
+        if (!restartingStaleInstance)
+        {
+            var recovered = TryActivateExistingInstance(request, expectedProcessId: null);
+            if (recovered != null)
+                return recovered;
+        }
+
+        var executableResult = ResolveExecutableForLaunch();
+        if (executableResult.Error != null)
+            return executableResult.Error;
+
+        return StartNewProcess(
+            request,
+            executableResult.Path!,
+            restartingStaleInstance);
+    }
+
+    private ResponseCenterLaunchResult? TryActivateExistingInstance(
+        LaunchResponseCenterRequest request,
+        int? expectedProcessId)
+    {
+        if (!_activationClient.Notify(request))
+            return null;
 
         _logger.Info(
-            $"Existing Response Center found for TIA instance {request.TiaInstanceId}: pid={existing.ProcessId}");
+            $"Activation request sent to existing Response Center: taskId={request.TaskId}, " +
+            $"tiaInstance={request.TiaInstanceId}");
 
-        // Send task notification to the existing instance
-        var notified = NotifyExistingInstance(request.TiaInstanceId, request.TaskId);
-        if (!notified)
-        {
-            _logger.Warn("Failed to notify existing instance via pipe; treating as stale and starting new process");
-            KillAndRemoveInstance(request.TiaInstanceId, existing.ProcessId);
-            return StartNewProcess(request, executablePath);
-        }
-
-        _logger.Info($"Notified existing Response Center of new task: taskId={request.TaskId}");
-
-        // Wait for readiness confirmation from the existing instance
         var readiness = WaitForReadiness(request.TiaInstanceId, DefaultReadinessTimeout);
-        if (readiness != null)
+        if (!IsValidReadiness(request, readiness, expectedProcessId))
         {
-            _logger.Info(
-                $"Existing Response Center confirmed activation: pid={readiness.ProcessId}, " +
-                $"hwnd={readiness.WindowHandle}, isVisible={readiness.IsVisible}");
-
-            return new ResponseCenterLaunchResult
-            {
-                Status = ResponseCenterLaunchStatus.ActivatedAndVisible,
-                ProcessId = readiness.ProcessId,
-                ActivatedExistingInstance = true,
-                WindowHandle = readiness.WindowHandle
-            };
+            _logger.Warn(
+                $"Existing Response Center did not confirm the requested task: taskId={request.TaskId}, " +
+                $"tiaInstance={request.TiaInstanceId}");
+            return null;
         }
 
-        // Existing instance did not confirm readiness — treat as stale
-        _logger.Warn(
-            $"Existing Response Center pid={existing.ProcessId} did not confirm readiness; " +
-            "treating as stale and starting new process");
-        KillAndRemoveInstance(request.TiaInstanceId, existing.ProcessId);
-        return StartNewProcess(request, executablePath);
+        _instances[request.TiaInstanceId] = new ManagedInstance
+        {
+            ProcessId = readiness!.ProcessId,
+            TiaInstanceId = request.TiaInstanceId,
+            StartedAt = DateTime.UtcNow
+        };
+
+        _logger.Info(
+            $"Existing Response Center confirmed activation: pid={readiness.ProcessId}, " +
+            $"hwnd={readiness.WindowHandle}, taskId={readiness.TaskId}");
+
+        return new ResponseCenterLaunchResult
+        {
+            Status = ResponseCenterLaunchStatus.ActivatedAndVisible,
+            ProcessId = readiness.ProcessId,
+            ActivatedExistingInstance = true,
+            WindowHandle = readiness.WindowHandle
+        };
     }
 
     private ResponseCenterLaunchResult StartNewProcess(
-        LaunchResponseCenterRequest request, string executablePath)
+        LaunchResponseCenterRequest request,
+        string executablePath,
+        bool restartingStaleInstance)
     {
         try
         {
@@ -212,38 +281,38 @@ public sealed class ResponseCenterProcessManager : IDisposable
                 };
             }
 
-            _instances[request.TiaInstanceId] = new ManagedInstance
-            {
-                ProcessId = process.Id,
-                TiaInstanceId = request.TiaInstanceId,
-                StartedAt = DateTime.UtcNow
-            };
-
             _logger.Info(
                 $"Response Center process started: pid={process.Id}, taskId={request.TaskId}, " +
                 $"tiaInstance={request.TiaInstanceId}");
 
-            // Wait for readiness — the RC sends this after window.Show()
             var readiness = WaitForReadiness(request.TiaInstanceId, DefaultReadinessTimeout);
-            if (readiness != null)
+            if (IsValidReadiness(request, readiness, process.Id))
             {
+                _instances[request.TiaInstanceId] = new ManagedInstance
+                {
+                    ProcessId = process.Id,
+                    TiaInstanceId = request.TiaInstanceId,
+                    StartedAt = DateTime.UtcNow
+                };
+
                 _logger.Info(
-                    $"Response Center confirmed visible: pid={readiness.ProcessId}, " +
-                    $"hwnd={readiness.WindowHandle}, isVisible={readiness.IsVisible}");
+                    $"Response Center confirmed visible: pid={readiness!.ProcessId}, " +
+                    $"hwnd={readiness.WindowHandle}, taskId={readiness.TaskId}");
 
                 return new ResponseCenterLaunchResult
                 {
-                    Status = ResponseCenterLaunchStatus.StartedAndVisible,
+                    Status = restartingStaleInstance
+                        ? ResponseCenterLaunchStatus.StaleInstanceRestarted
+                        : ResponseCenterLaunchStatus.StartedAndVisible,
                     ProcessId = readiness.ProcessId,
                     ActivatedExistingInstance = false,
                     WindowHandle = readiness.WindowHandle
                 };
             }
 
-            // Readiness timeout — the process started but never showed a window
             _logger.Warn(
-                $"Response Center pid={process.Id} did not send readiness within " +
-                $"{DefaultReadinessTimeout.TotalSeconds}s — treating as startup failure");
+                $"Response Center pid={process.Id} did not confirm the requested visible window within " +
+                $"{DefaultReadinessTimeout.TotalSeconds}s; treating startup as failed");
 
             KillAndRemoveInstance(request.TiaInstanceId, process.Id);
 
@@ -251,7 +320,7 @@ public sealed class ResponseCenterProcessManager : IDisposable
             {
                 Status = ResponseCenterLaunchStatus.StartupFailure,
                 ProcessId = process.Id,
-                ErrorMessage = "Response Center started but did not confirm window visibility within the timeout period."
+                ErrorMessage = "Response Center started but did not confirm the requested task and window visibility within the timeout period."
             };
         }
         catch (Exception ex)
@@ -263,6 +332,40 @@ public sealed class ResponseCenterProcessManager : IDisposable
                 ErrorMessage = $"Failed to start Response Center: {ex.Message}"
             };
         }
+    }
+
+    private (string? Path, ResponseCenterLaunchResult? Error) ResolveExecutableForLaunch()
+    {
+        string? executablePath;
+        try
+        {
+            executablePath = ResolveExecutablePath(_installationRoot);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to resolve Response Center executable path", ex);
+            return (
+                null,
+                new ResponseCenterLaunchResult
+                {
+                    Status = ResponseCenterLaunchStatus.ExecutableNotFound,
+                    ErrorMessage = $"Could not resolve Response Center executable: {ex.Message}"
+                });
+        }
+
+        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        {
+            _logger.Warn($"Response Center executable not found at '{executablePath}'");
+            return (
+                null,
+                new ResponseCenterLaunchResult
+                {
+                    Status = ResponseCenterLaunchStatus.ExecutableNotFound,
+                    ErrorMessage = $"Response Center executable was not found at '{executablePath}'. Reinstall or update TIA Agent."
+                });
+        }
+
+        return (executablePath, null);
     }
 
     private ResponseCenterReadinessInfo? WaitForReadiness(string tiaInstanceId, TimeSpan timeout)
@@ -277,6 +380,21 @@ public sealed class ResponseCenterProcessManager : IDisposable
             _logger.Warn($"Error waiting for readiness: {ex.Message}");
             return null;
         }
+    }
+
+    private static bool IsValidReadiness(
+        LaunchResponseCenterRequest request,
+        ResponseCenterReadinessInfo? readiness,
+        int? expectedProcessId)
+    {
+        if (readiness == null || !readiness.IsVisible || readiness.ProcessId <= 0)
+            return false;
+
+        if (expectedProcessId.HasValue && readiness.ProcessId != expectedProcessId.Value)
+            return false;
+
+        return string.Equals(readiness.TaskId, request.TaskId, StringComparison.Ordinal)
+            && string.Equals(readiness.TiaInstanceId, request.TiaInstanceId, StringComparison.Ordinal);
     }
 
     private void KillAndRemoveInstance(string tiaInstanceId, int processId)
@@ -389,25 +507,6 @@ public sealed class ResponseCenterProcessManager : IDisposable
         return result.ToString();
     }
 
-    private bool NotifyExistingInstance(string tiaInstanceId, string taskId)
-    {
-        var pipeName = GetPipeName(tiaInstanceId);
-        try
-        {
-            using var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
-            pipeClient.Connect(2000);
-            var buffer = Encoding.UTF8.GetBytes(taskId + "\n");
-            pipeClient.Write(buffer, 0, buffer.Length);
-            pipeClient.Flush();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug($"Named pipe notification failed for {tiaInstanceId}: {ex.Message}");
-            return false;
-        }
-    }
-
     internal static string GetPipeName(string tiaInstanceId)
     {
         var sanitized = SanitizeForPipeName(tiaInstanceId);
@@ -428,6 +527,7 @@ public sealed class ResponseCenterProcessManager : IDisposable
     public void Dispose()
     {
         _instances.Clear();
+        _instanceLocks.Clear();
         _readinessListener.Dispose();
     }
 

@@ -16,7 +16,7 @@ namespace TiaAgent.ResponseCenter.Views;
 /// </summary>
 public partial class AgentResponseWindow : Window
 {
-    private readonly AgentResponseViewModel _viewModel;
+    private AgentResponseViewModel _viewModel;
     private bool _contentRendered;
 
     /// <summary>True after ContentRendered has fired at least once.</summary>
@@ -28,11 +28,8 @@ public partial class AgentResponseWindow : Window
         InitializeComponent();
         ResponseCenterLogger.Info("InitializeComponent completed");
 
-        _viewModel = viewModel;
-        DataContext = _viewModel;
-
-        _viewModel.RequestClose += OnViewModelRequestClose;
-        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        AttachViewModel(_viewModel);
 
         Closing += OnWindowClosing;
         Closed += OnWindowClosed;
@@ -42,11 +39,48 @@ public partial class AgentResponseWindow : Window
     }
 
     /// <summary>
+    /// Rebinds the existing window to a newly accepted Bridge task.
+    /// Must be called on the window dispatcher.
+    /// </summary>
+    public void SwitchViewModel(AgentResponseViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+
+        if (!Dispatcher.CheckAccess())
+            throw new InvalidOperationException("SwitchViewModel must run on the window dispatcher.");
+
+        var previousViewModel = _viewModel;
+        DetachViewModel(previousViewModel);
+
+        _viewModel = viewModel;
+        AttachViewModel(_viewModel);
+
+        ResponseViewer.Document = null;
+        DetailsToggleText.Text = Strings.ViewDetails;
+
+        previousViewModel.Dispose();
+        ResponseCenterLogger.Info("Window rebound to the new task ViewModel");
+    }
+
+    /// <summary>
     /// Sets raw response text for rendering.
     /// </summary>
     public void SetResponse(string response)
     {
         RenderResponse(response);
+    }
+
+    private void AttachViewModel(AgentResponseViewModel viewModel)
+    {
+        DataContext = viewModel;
+        viewModel.RequestClose += OnViewModelRequestClose;
+        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void DetachViewModel(AgentResponseViewModel viewModel)
+    {
+        viewModel.RequestClose -= OnViewModelRequestClose;
+        viewModel.PropertyChanged -= OnViewModelPropertyChanged;
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -90,11 +124,10 @@ public partial class AgentResponseWindow : Window
         {
             var dpi = VisualTreeHelper.GetDpi(this);
 
-            // Left/Top may be NaN or 0 if WindowStartupLocation=Manual without explicit positioning.
-            // In that case, center the window instead of comparing against monitors.
             if (double.IsNaN(Left) || double.IsNaN(Top) || (Left == 0 && Top == 0))
             {
-                ResponseCenterLogger.Info("Window position is default (0,0 or NaN) — centering on primary screen");
+                ResponseCenterLogger.Info(
+                    "Window position is default (0,0 or NaN); centering on primary screen");
                 Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
                 Top = (SystemParameters.PrimaryScreenHeight - Height) / 2;
                 return;
@@ -121,10 +154,10 @@ public partial class AgentResponseWindow : Window
                 {
                     monitorCount++;
                     var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-                    if (GetMonitorInfo(hMonitor, ref info))
+                    if (GetMonitorInfo(hMonitor, ref info)
+                        && RectanglesOverlap(windowRect, info.rcWork))
                     {
-                        if (RectanglesOverlap(windowRect, info.rcWork))
-                            intersectsAnyMonitor = true;
+                        intersectsAnyMonitor = true;
                     }
                     return true;
                 }, IntPtr.Zero);
@@ -132,7 +165,7 @@ public partial class AgentResponseWindow : Window
             if (!intersectsAnyMonitor && monitorCount > 0)
             {
                 ResponseCenterLogger.Warn(
-                    $"Window is off-screen (pos={Left:F0},{Top:F0}) — resetting to center");
+                    $"Window is off-screen (pos={Left:F0},{Top:F0}); resetting to center");
                 Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
                 Top = (SystemParameters.PrimaryScreenHeight - Height) / 2;
             }
@@ -150,15 +183,15 @@ public partial class AgentResponseWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (!ReferenceEquals(sender, _viewModel))
+            return;
+
         if (e.PropertyName is not (nameof(AgentResponseViewModel.ShowResponse)
             or nameof(AgentResponseViewModel.ResponseContent)))
         {
             return;
         }
 
-        // The Bridge can report completion immediately before publishing the response.
-        // Listen to both properties so rendering is correct regardless of event order,
-        // including a completed task that returned no content.
         if (_viewModel.ShowResponse)
             RenderResponse(_viewModel.ResponseContent);
     }
@@ -182,24 +215,18 @@ public partial class AgentResponseWindow : Window
 
     private void OnViewModelRequestClose()
     {
-        Dispatcher.Invoke(() =>
-        {
-            _viewModel.RequestClose -= OnViewModelRequestClose;
-            Close();
-        });
+        Dispatcher.Invoke(Close);
     }
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
-        // Stop the remote task when the user closes the window during processing.
         if (_viewModel.IsBusy && _viewModel.CancelCommand.CanExecute(null))
             _viewModel.CancelCommand.Execute(null);
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {
-        _viewModel.RequestClose -= OnViewModelRequestClose;
-        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        DetachViewModel(_viewModel);
         _viewModel.Dispose();
     }
 

@@ -26,7 +26,7 @@ internal sealed class ResponseCenterLaunchResult
 
 /// <summary>
 /// Requests the Bridge to start or activate the Response Center.
-/// The Add-In does not launch processes directly — that responsibility
+/// The Add-In does not launch processes directly; that responsibility
 /// belongs to the Bridge, which runs outside the TIA Portal sandbox.
 /// </summary>
 internal static class ResponseCenterLauncher
@@ -59,7 +59,7 @@ internal static class ResponseCenterLauncher
             AddInLogger.Info(
                 $"Requesting Bridge to launch Response Center: taskId={taskId}, action={action}");
 
-            var response = await AddInServices.BridgeClient
+            var response = await global::TiaAgent.AddIn.AddInServices.BridgeClient
                 .LaunchResponseCenterAsync(request, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -98,7 +98,7 @@ internal static class ResponseCenterLauncher
 
     private static string GetCurrentTiaInstanceId()
     {
-        return AddInServices.TiaInstanceId;
+        return global::TiaAgent.AddIn.AddInServices.TiaInstanceId;
     }
 
     internal static string ResolveExecutablePath(string? installationRoot = null)
