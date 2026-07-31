@@ -112,20 +112,15 @@ public static class MarkdownRenderer
             case Table table:
                 target.Add(CreateTable(table, theme));
                 break;
+            case LinkReferenceDefinitionGroup:
+                // Skip non-visual reference-definition containers (e.g. heading auto-identifiers).
+                break;
             case ContainerBlock container:
                 foreach (var child in container)
                     RenderBlock(target, child, theme);
                 break;
             default:
-                var text = block.ToString();
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    target.Add(new WpfDocuments.Paragraph(new WpfDocuments.Run(text))
-                    {
-                        Foreground = theme.BodyBrush,
-                        Margin = theme.ParagraphMargin
-                    });
-                }
+                // Ignore unknown or non-visual AST nodes instead of leaking CLR type names.
                 break;
         }
     }

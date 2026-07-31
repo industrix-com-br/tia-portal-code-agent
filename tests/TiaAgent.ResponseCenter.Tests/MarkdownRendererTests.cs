@@ -134,6 +134,141 @@ End.";
     }
 
     [Fact]
+    public void Render_HeadingDoesNotEmitLinkReferenceDefinitionText()
+    {
+        var document = MarkdownRenderer.Render("# Heading 1\n## Heading 2\n### Heading 3");
+        
+        document.Should().NotBeNull();
+        var text = GetText(document!);
+        
+        text.Should().NotContain("LinkReferenceDefinition");
+        text.Should().NotContain("HeadingLinkReferenceDefinition");
+    }
+
+    [Fact]
+    public void Render_DoesNotContainMarkdigTypeNames()
+    {
+        var markdown = @"# Title
+
+Some paragraph with **bold** and *italic*.
+
+- List item 1
+- List item 2
+
+```python
+print('hello')
+```
+
+> A blockquote
+
+---
+
+End.";
+        var document = MarkdownRenderer.Render(markdown);
+        
+        document.Should().NotBeNull();
+        var text = GetText(document!);
+        
+        text.Should().NotContain("Markdig.");
+        text.Should().NotContain("AutoIdentifiers");
+    }
+
+    [Fact]
+    public void Render_HeadingsAndContentRemainPresent()
+    {
+        var document = MarkdownRenderer.Render("# Heading 1\n## Heading 2\n### Heading 3\n\nParagraph text here.");
+        
+        document.Should().NotBeNull();
+        var text = GetText(document!);
+        
+        text.Should().Contain("Heading 1");
+        text.Should().Contain("Heading 2");
+        text.Should().Contain("Heading 3");
+        text.Should().Contain("Paragraph text here.");
+    }
+
+    [Fact]
+    public void Render_MultipleHeadingsDoNotCreateExtraAstMetadataParagraphs()
+    {
+        var markdown = "# H1\n## H2\n### H3\n#### H4\n##### H5";
+        var document = MarkdownRenderer.Render(markdown);
+        
+        document.Should().NotBeNull();
+        var text = GetText(document!);
+        
+        // Should only contain the heading text, no AST metadata
+        text.Should().NotContain("HeadingLinkReferenceDefinition");
+        text.Should().NotContain("LinkReferenceDefinition");
+        text.Should().NotContain("Markdig.");
+        
+        // All headings should be present
+        text.Should().Contain("H1");
+        text.Should().Contain("H2");
+        text.Should().Contain("H3");
+        text.Should().Contain("H4");
+        text.Should().Contain("H5");
+    }
+
+    [Fact]
+    public void Render_SupportedMarkdownStructuresRenderWithoutExceptions()
+    {
+        var markdown = @"# Heading 1
+
+## Heading 2
+
+### Heading 3
+
+Normal paragraph with **bold** and *italic* text.
+
+- Unordered list item 1
+- Unordered list item 2
+
+1. Ordered list item 1
+2. Ordered list item 2
+
+```csharp
+var x = 1;
+```
+
+> Blockquote text
+
+| Col1 | Col2 |
+|------|------|
+| A    | B    |
+
+---
+
+[Link text](https://example.com)
+
+Line break  
+Next line";
+
+        var act = () => MarkdownRenderer.Render(markdown);
+        act.Should().NotThrow();
+        
+        var document = MarkdownRenderer.Render(markdown);
+        document.Should().NotBeNull();
+        var text = GetText(document!);
+        
+        // Verify no Markdig type names leak
+        text.Should().NotContain("Markdig.");
+        text.Should().NotContain("LinkReferenceDefinition");
+        
+        // Verify content is present
+        text.Should().Contain("Heading 1");
+        text.Should().Contain("Heading 2");
+        text.Should().Contain("Heading 3");
+        text.Should().Contain("Normal paragraph");
+        text.Should().Contain("Unordered list item 1");
+        text.Should().Contain("Ordered list item 1");
+        text.Should().Contain("var x = 1;");
+        text.Should().Contain("Blockquote text");
+        text.Should().Contain("Col1");
+        text.Should().Contain("Col2");
+        text.Should().Contain("Link text");
+    }
+
+    [Fact]
     public void CreatePlainTextFallback_ProducesDocument()
     {
         var document = MarkdownRenderer.CreatePlainTextFallback("Hello\nWorld");
