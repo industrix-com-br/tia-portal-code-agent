@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - automation/code-scanning-audit-20260802
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
