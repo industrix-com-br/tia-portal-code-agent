@@ -51,7 +51,7 @@ public class BridgeAuthTests : IDisposable
     {
         StartBridge();
 
-        var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
         var response = await _httpClient!.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -65,7 +65,7 @@ public class BridgeAuthTests : IDisposable
         StartBridge();
         _httpClient!.DefaultRequestHeaders.Authorization = null;
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/tasks")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/tasks")
         {
             Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
         };
@@ -83,7 +83,7 @@ public class BridgeAuthTests : IDisposable
         StartBridge();
         _httpClient!.DefaultRequestHeaders.Authorization = null;
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/tasks")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/tasks")
         {
             Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
         };
@@ -102,7 +102,7 @@ public class BridgeAuthTests : IDisposable
         _httpClient!.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "totally-wrong-token");
 
-        var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -116,7 +116,7 @@ public class BridgeAuthTests : IDisposable
         StartBridge();
         SetValidAuthToken();
 
-        var content = new StringContent("not-json", System.Text.Encoding.UTF8, "application/json");
+        using var content = new StringContent("not-json", System.Text.Encoding.UTF8, "application/json");
         var response = await _httpClient!.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -129,7 +129,7 @@ public class BridgeAuthTests : IDisposable
         SetValidAuthToken();
 
         var body = @"{""contractVersion"":""1.0"",""correlationId"":""test-123"",""action"":""explain"",""agentId"":""tia-explain"",""userMessage"":""test""}";
-        var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
         var response = await _httpClient!.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);

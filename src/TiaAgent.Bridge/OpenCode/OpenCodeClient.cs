@@ -37,10 +37,10 @@ public sealed class OpenCodeClient : IDisposable
     public async Task<SessionResponse> CreateSessionAsync(string agentId, string prompt, CancellationToken cancellationToken = default)
     {
         var payload = $"{{\"agent\":\"{EscapeJson(agentId)}\",\"prompt\":\"{EscapeJson(prompt)}\"}}";
-        var content = new StringContent(payload, Encoding.UTF8, "application/json");
         var url = $"{_baseUrl}/sessions";
         try
         {
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync(url, content, cancellationToken).ConfigureAwait(false);
             var body = await ReadResponseUtf8Async(response, cancellationToken).ConfigureAwait(false);
             return new SessionResponse
@@ -63,7 +63,7 @@ public sealed class OpenCodeClient : IDisposable
     public async Task<MessageResponse> SendMessageAsync(string sessionId, string message, CancellationToken cancellationToken = default)
     {
         var payload = $"{{\"message\":\"{EscapeJson(message)}\"}}";
-        var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync($"{_baseUrl}/sessions/{sessionId}/messages", content, cancellationToken).ConfigureAwait(false);
         var body = await ReadResponseUtf8Async(response, cancellationToken).ConfigureAwait(false);
         return new MessageResponse

@@ -94,7 +94,7 @@ public static class Program
         // Create and start the controller
         var controller = new BridgeController(config, logger, tokenProvider, runtimeRegistry, taskManager, rcProcessManager);
 
-        var shutdownCts = new CancellationTokenSource();
+        using var shutdownCts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;

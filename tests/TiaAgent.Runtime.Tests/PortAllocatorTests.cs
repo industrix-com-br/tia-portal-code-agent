@@ -64,11 +64,10 @@ public class PortAllocatorTests
     {
         try
         {
-            var listener = new System.Net.Sockets.TcpListener(
+            using var listener = new System.Net.Sockets.TcpListener(
                 System.Net.IPAddress.Loopback, port);
             listener.Start();
             listener.Stop();
-            listener.Dispose();
             return true;
         }
         catch

@@ -133,7 +133,7 @@ public sealed class AgentBridgeClient : IAgentBridgeClient, IDisposable
     public async Task<BridgeHealthResponse> CheckHealthAsync(CancellationToken cancellationToken)
     {
         EnsureCurrentClient();
-        var response = await _httpClient.GetAsync("/health", cancellationToken).ConfigureAwait(false);
+        using var response = await _httpClient.GetAsync("/health", cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         var json = await ReadResponseUtf8Async(response).ConfigureAwait(false);
