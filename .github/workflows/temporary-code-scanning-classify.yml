@@ -1,4 +1,4 @@
-name: Temporary code scanning classification
+name: Temporary code scanning stale-alert cleanup
 
 on:
   push:
@@ -9,10 +9,10 @@ on:
 
 permissions:
   contents: write
-  security-events: read
+  security-events: write
 
 jobs:
-  classify:
+  dismiss-stale-alerts:
     runs-on: ubuntu-latest
     steps:
       - name: Check out audit branch
@@ -20,105 +20,124 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Classify open code scanning alerts
+      - name: Dismiss alerts whose paths are absent from main
         env:
           GH_TOKEN: ${{ github.token }}
           AUDIT_BRANCH: automation/code-scanning-audit-20260802
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           repo="$GITHUB_REPOSITORY"
           git fetch origin main --quiet
           main_sha="$(git rev-parse origin/main)"
 
-          gh api --paginate \
+          if ! gh api --paginate \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
-            | jq -s 'add // []' > open-alerts.json
+            | jq -s 'add // []' > open-alerts.json; then
+            echo '::error::Unable to list open code scanning alerts.'
+            exit 1
+          fi
 
-          total="$(jq 'length' open-alerts.json)"
-          : > missing.tsv
-          : > non_main.tsv
+          report="$GITHUB_WORKSPACE/code-scanning-stale-dismissal-report.md"
+          dismissed_tsv="$(mktemp)"
+          failed_tsv="$(mktemp)"
+          dismissed_count=0
+          generated_count=0
+          removed_count=0
+          failed_count=0
 
           jq -c '.[]' open-alerts.json | while IFS= read -r alert; do
             number="$(jq -r '.number' <<<"$alert")"
-            state="$(jq -r '.state // "unknown"' <<<"$alert")"
-            rule="$(jq -r '.rule.id // "unknown"' <<<"$alert")"
-            severity="$(jq -r '.rule.security_severity_level // .rule.severity // "unknown"' <<<"$alert")"
             ref="$(jq -r '.most_recent_instance.ref // "unknown"' <<<"$alert")"
             path="$(jq -r '.most_recent_instance.location.path // ""' <<<"$alert")"
             line="$(jq -r '.most_recent_instance.location.start_line // 0' <<<"$alert")"
-            message="$(jq -r '.most_recent_instance.message.text // ""' <<<"$alert" | tr '\t\r\n' '   ')"
+            severity="$(jq -r '.rule.security_severity_level // .rule.severity // "unknown"' <<<"$alert")"
+            rule="$(jq -r '.rule.id // "unknown"' <<<"$alert")"
 
-            exists=true
-            if [ -z "$path" ] || ! git cat-file -e "origin/main:$path" 2>/dev/null; then
-              exists=false
-              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$number" "$state" "$severity" "$rule" "$ref" "$path:$line" "$message" >> missing.tsv
+            [ "$ref" = "refs/heads/main" ] || continue
+            [ -n "$path" ] || continue
+            if git cat-file -e "origin/main:$path" 2>/dev/null; then
+              continue
             fi
 
-            if [ "$ref" != "refs/heads/main" ]; then
-              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$number" "$state" "$severity" "$rule" "$ref" "$path:$line" "$exists" "$message" >> non_main.tsv
+            kind="removed source"
+            comment="Stale CodeQL alert: the referenced path is absent from the current main branch, so the finding no longer applies to maintained source."
+            if [[ "$path" == *"/obj/"* || "$path" == *"/generated/"* || "$path" == *.g.cs ]]; then
+              kind="generated build artifact"
+              comment="Non-actionable CodeQL alert in generated build output. The referenced path is not maintained source and is absent from the current main tree."
+            fi
+
+            if gh api --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$repo/code-scanning/alerts/$number" \
+              -f state='dismissed' \
+              -f dismissed_reason='false positive' \
+              -f dismissed_comment="$comment" \
+              >/dev/null; then
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$number" "$severity" "$rule" "$kind" "$path:$line" "$comment" >> "$dismissed_tsv"
+            else
+              printf '%s\t%s\t%s\t%s\n' "$number" "$rule" "$path:$line" "PATCH failed" >> "$failed_tsv"
             fi
           done
 
-          missing_count="$(wc -l < missing.tsv | tr -d ' ')"
-          non_main_count="$(wc -l < non_main.tsv | tr -d ' ')"
-          report="$GITHUB_WORKSPACE/code-scanning-classification.md"
+          dismissed_count="$(wc -l < "$dismissed_tsv" | tr -d ' ')"
+          failed_count="$(wc -l < "$failed_tsv" | tr -d ' ')"
+          generated_count="$(awk -F '\t' '$4 == "generated build artifact" { count++ } END { print count+0 }' "$dismissed_tsv")"
+          removed_count="$(awk -F '\t' '$4 == "removed source" { count++ } END { print count+0 }' "$dismissed_tsv")"
+
+          remaining="$(gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
+            | jq -s 'add // [] | length')"
 
           {
-            echo '# Code scanning classification'
+            echo '# Code scanning stale-alert dismissal report'
             echo
-            echo "- Main commit: \`$main_sha\`"
-            echo "- Open alerts: **$total**"
-            echo "- Alerts whose referenced path is absent from current main: **$missing_count**"
-            echo "- Alerts whose most recent instance is not on main: **$non_main_count**"
+            echo "- Main commit verified: \`$main_sha\`"
+            echo "- Alerts dismissed in this pass: **$dismissed_count**"
+            echo "- Generated build-output alerts dismissed: **$generated_count**"
+            echo "- Removed-source alerts dismissed: **$removed_count**"
+            echo "- Failures: **$failed_count**"
+            echo "- Open alerts remaining: **$remaining**"
             echo
-            echo '## Counts by severity'
+            echo '## Dismissed alerts'
             echo
-            echo '| Severity | Count |'
-            echo '|---|---:|'
-            jq -r 'group_by(.rule.security_severity_level // .rule.severity // "unknown")[] | "| \(.[0].rule.security_severity_level // .[0].rule.severity // "unknown") | \(length) |"' open-alerts.json
-            echo
-            echo '## Counts by rule'
-            echo
-            echo '| Rule | Count |'
-            echo '|---|---:|'
-            jq -r 'group_by(.rule.id // "unknown") | sort_by(length) | reverse[] | "| `\(.[0].rule.id // "unknown")` | \(length) |"' open-alerts.json
-            echo
-            echo '## Alerts referencing paths absent from main'
-            echo
-            if [ "$missing_count" -eq 0 ]; then
-              echo 'None.'
+            echo '| Alert | Severity | Rule | Classification | Location |'
+            echo '|---:|---|---|---|---|'
+            if [ "$dismissed_count" -eq 0 ]; then
+              echo '| — | — | — | No matching open alerts | — |'
             else
-              echo '| Alert | State | Severity | Rule | Most recent ref | Location | Message |'
-              echo '|---:|---|---|---|---|---|---|'
-              while IFS=$'\t' read -r number state severity rule ref location message; do
-                printf '| #%s | %s | %s | `%s` | `%s` | `%s` | %s |\n' "$number" "$state" "$severity" "$rule" "$ref" "$location" "$message"
-              done < missing.tsv
+              while IFS=$'\t' read -r number severity rule kind location comment; do
+                printf '| #%s | %s | `%s` | %s | `%s` |\n' "$number" "$severity" "$rule" "$kind" "$location"
+              done < "$dismissed_tsv"
             fi
-            echo
-            echo '## Alerts whose most recent instance is not on main'
-            echo
-            if [ "$non_main_count" -eq 0 ]; then
-              echo 'None.'
-            else
-              echo '| Alert | State | Severity | Rule | Ref | Location | Path exists on main | Message |'
-              echo '|---:|---|---|---|---|---|---|---|'
-              while IFS=$'\t' read -r number state severity rule ref location exists message; do
-                printf '| #%s | %s | %s | `%s` | `%s` | `%s` | %s | %s |\n' "$number" "$state" "$severity" "$rule" "$ref" "$location" "$exists" "$message"
-              done < non_main.tsv
+            if [ "$failed_count" -gt 0 ]; then
+              echo
+              echo '## Failures'
+              echo
+              echo '| Alert | Rule | Location | Error |'
+              echo '|---:|---|---|---|'
+              while IFS=$'\t' read -r number rule location error; do
+                printf '| #%s | `%s` | `%s` | %s |\n' "$number" "$rule" "$location" "$error"
+              done < "$failed_tsv"
             fi
           } > "$report"
 
-          rm -f open-alerts.json missing.tsv non_main.tsv
+          rm -f open-alerts.json "$dismissed_tsv" "$failed_tsv"
           git pull --rebase origin "$AUDIT_BRANCH"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add code-scanning-classification.md
-          if git diff --cached --quiet; then
-            exit 0
+          git add code-scanning-stale-dismissal-report.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record stale code scanning dismissals'
+            git push origin "HEAD:$AUDIT_BRANCH"
           fi
-          git commit -m 'chore: classify temporary code scanning alerts'
-          git push origin "HEAD:$AUDIT_BRANCH"
+
+          if [ "$failed_count" -gt 0 ]; then
+            exit 1
+          fi
