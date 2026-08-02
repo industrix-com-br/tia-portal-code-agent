@@ -4,33 +4,35 @@ on:
   push:
     branches:
       - automation/code-scanning-audit-20260802
+    paths:
+      - .github/workflows/temporary-code-scanning-audit.yml
 
 permissions:
-  contents: read
+  contents: write
   security-events: write
-  pull-requests: write
-  issues: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out audit branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Inspect and report open code scanning alerts
+      - name: Inspect alerts and commit report
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: "192"
+          AUDIT_BRANCH: automation/code-scanning-audit-20260802
         shell: bash
         run: |
           set -euo pipefail
 
           repo="$GITHUB_REPOSITORY"
           git fetch origin main --quiet
-          git checkout --detach origin/main --quiet
+          main_sha="$(git rev-parse origin/main)"
+          main_dir="$(mktemp -d)"
+          git worktree add --detach "$main_dir" origin/main >/dev/null
 
           gh api --paginate \
             -H "Accept: application/vnd.github+json" \
@@ -39,7 +41,7 @@ jobs:
             | jq -s 'add // []' > open-alerts.json
 
           count="$(jq 'length' open-alerts.json)"
-          main_sha="$(git rev-parse HEAD)"
+          report="$GITHUB_WORKSPACE/code-scanning-audit-report.md"
 
           {
             echo '<!-- code-scanning-audit-20260802 -->'
@@ -48,77 +50,86 @@ jobs:
             echo "- Main commit inspected: \`$main_sha\`"
             echo "- Open alerts: **$count**"
             echo
-          } > report.md
+          } > "$report"
 
           if [ "$count" -eq 0 ]; then
-            echo 'No open code scanning alerts were found.' >> report.md
-            gh pr comment "$PR_NUMBER" --repo "$repo" --body-file report.md
-            exit 0
+            echo 'No open code scanning alerts were found.' >> "$report"
+          else
+            jq -c '.[]' open-alerts.json | while IFS= read -r alert; do
+              number="$(jq -r '.number' <<<"$alert")"
+              rule_id="$(jq -r '.rule.id // "unknown"' <<<"$alert")"
+              rule_name="$(jq -r '.rule.name // "unknown"' <<<"$alert")"
+              severity="$(jq -r '.rule.security_severity_level // .rule.severity // "unknown"' <<<"$alert")"
+              tool="$(jq -r '.tool.name // "unknown"' <<<"$alert")"
+              created_at="$(jq -r '.created_at // "unknown"' <<<"$alert")"
+              updated_at="$(jq -r '.updated_at // "unknown"' <<<"$alert")"
+              html_url="$(jq -r '.html_url // ""' <<<"$alert")"
+              path="$(jq -r '.most_recent_instance.location.path // ""' <<<"$alert")"
+              start_line="$(jq -r '.most_recent_instance.location.start_line // 1' <<<"$alert")"
+              end_line="$(jq -r '.most_recent_instance.location.end_line // .most_recent_instance.location.start_line // 1' <<<"$alert")"
+              ref="$(jq -r '.most_recent_instance.ref // "unknown"' <<<"$alert")"
+              commit_sha="$(jq -r '.most_recent_instance.commit_sha // "unknown"' <<<"$alert")"
+              message="$(jq -r '.most_recent_instance.message.text // ""' <<<"$alert")"
+              instance_state="$(jq -r '.most_recent_instance.state // "unknown"' <<<"$alert")"
+
+              {
+                echo "## Alert #$number — $rule_name"
+                echo
+                echo "- Rule: \`$rule_id\`"
+                echo "- Severity: **$severity**"
+                echo "- Tool: $tool"
+                echo "- Instance state: \`$instance_state\`"
+                echo "- Most recent ref: \`$ref\`"
+                echo "- Most recent commit: \`$commit_sha\`"
+                echo "- Created: $created_at"
+                echo "- Updated: $updated_at"
+                if [ -n "$html_url" ]; then
+                  echo "- Alert: $html_url"
+                fi
+                echo "- Location: \`$path:$start_line-$end_line\`"
+                echo "- Message: $message"
+                echo
+              } >> "$report"
+
+              if [ -n "$path" ] && [ -f "$main_dir/$path" ]; then
+                current_lines="$(wc -l < "$main_dir/$path" | tr -d ' ')"
+                from=$((start_line > 8 ? start_line - 8 : 1))
+                to=$((end_line + 8))
+                if [ "$to" -gt "$current_lines" ]; then
+                  to="$current_lines"
+                fi
+
+                {
+                  echo '- Current file exists on `main`: **yes**'
+                  echo "- Current file length: $current_lines lines"
+                  echo
+                  echo '<details><summary>Current code context</summary>'
+                  echo
+                  echo '```text'
+                  nl -ba "$main_dir/$path" | sed -n "${from},${to}p"
+                  echo '```'
+                  echo
+                  echo '</details>'
+                  echo
+                } >> "$report"
+              else
+                {
+                  echo '- Current file exists on `main`: **no**'
+                  echo
+                } >> "$report"
+              fi
+            done
           fi
 
-          jq -c '.[]' open-alerts.json | while IFS= read -r alert; do
-            number="$(jq -r '.number' <<<"$alert")"
-            rule_id="$(jq -r '.rule.id // "unknown"' <<<"$alert")"
-            rule_name="$(jq -r '.rule.name // "unknown"' <<<"$alert")"
-            severity="$(jq -r '.rule.security_severity_level // .rule.severity // "unknown"' <<<"$alert")"
-            tool="$(jq -r '.tool.name // "unknown"' <<<"$alert")"
-            created_at="$(jq -r '.created_at // "unknown"' <<<"$alert")"
-            updated_at="$(jq -r '.updated_at // "unknown"' <<<"$alert")"
-            html_url="$(jq -r '.html_url // ""' <<<"$alert")"
-            path="$(jq -r '.most_recent_instance.location.path // ""' <<<"$alert")"
-            start_line="$(jq -r '.most_recent_instance.location.start_line // 1' <<<"$alert")"
-            end_line="$(jq -r '.most_recent_instance.location.end_line // .most_recent_instance.location.start_line // 1' <<<"$alert")"
-            ref="$(jq -r '.most_recent_instance.ref // "unknown"' <<<"$alert")"
-            commit_sha="$(jq -r '.most_recent_instance.commit_sha // "unknown"' <<<"$alert")"
-            message="$(jq -r '.most_recent_instance.message.text // ""' <<<"$alert")"
-            instance_state="$(jq -r '.most_recent_instance.state // "unknown"' <<<"$alert")"
+          git worktree remove "$main_dir" --force
+          rm -f open-alerts.json
 
-            {
-              echo "## Alert #$number — $rule_name"
-              echo
-              echo "- Rule: \`$rule_id\`"
-              echo "- Severity: **$severity**"
-              echo "- Tool: $tool"
-              echo "- Instance state: \`$instance_state\`"
-              echo "- Most recent ref: \`$ref\`"
-              echo "- Most recent commit: \`$commit_sha\`"
-              echo "- Created: $created_at"
-              echo "- Updated: $updated_at"
-              if [ -n "$html_url" ]; then
-                echo "- Alert: $html_url"
-              fi
-              echo "- Location: \`$path:$start_line-$end_line\`"
-              echo "- Message: $message"
-              echo
-            } >> report.md
-
-            if [ -n "$path" ] && [ -f "$path" ]; then
-              current_lines="$(wc -l < "$path" | tr -d ' ')"
-              from=$((start_line > 8 ? start_line - 8 : 1))
-              to=$((end_line + 8))
-              if [ "$to" -gt "$current_lines" ]; then
-                to="$current_lines"
-              fi
-
-              {
-                echo '- Current file exists on `main`: **yes**'
-                echo "- Current file length: $current_lines lines"
-                echo
-                echo '<details><summary>Current code context</summary>'
-                echo
-                echo '```text'
-                nl -ba "$path" | sed -n "${from},${to}p"
-                echo '```'
-                echo
-                echo '</details>'
-                echo
-              } >> report.md
-            else
-              {
-                echo '- Current file exists on `main`: **no**'
-                echo
-              } >> report.md
-            fi
-          done
-
-          gh pr comment "$PR_NUMBER" --repo "$repo" --body-file report.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add code-scanning-audit-report.md
+          if git diff --cached --quiet; then
+            echo 'Audit report is unchanged.'
+            exit 0
+          fi
+          git commit -m 'chore: publish temporary code scanning audit report'
+          git push origin "HEAD:$AUDIT_BRANCH"
