@@ -53,7 +53,7 @@ public class TaskRoutingTests : IDisposable
         SetValidAuthToken();
 
         var body = @"{""contractVersion"":""1.0"",""correlationId"":""test-123"",""action"":""explain"",""agentId"":""tia-explain"",""userMessage"":""test"",""runtime"":""mimo""}";
-        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
         var response = await _httpClient!.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);
@@ -66,7 +66,7 @@ public class TaskRoutingTests : IDisposable
         SetValidAuthToken();
 
         var body = @"{""contractVersion"":""1.0"",""correlationId"":""test-123"",""action"":""explain"",""agentId"":""tia-explain"",""userMessage"":""test""}";
-        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
         var response = await _httpClient!.PostAsync("/v1/tasks", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);
@@ -80,7 +80,7 @@ public class TaskRoutingTests : IDisposable
 
         // Create a task
         var body = @"{""contractVersion"":""1.0"",""correlationId"":""test-123"",""action"":""explain"",""agentId"":""tia-explain"",""userMessage"":""test""}";
-        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
         var createResponse = await _httpClient!.PostAsync("/v1/tasks", content);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Accepted);
 
@@ -173,7 +173,7 @@ public class TaskRoutingTests : IDisposable
         SetValidAuthToken();
 
         var body = @"{""contractVersion"":""1.0"",""correlationId"":""test-123"",""action"":""explain"",""agentId"":""tia-explain"",""userMessage"":""test"",""runtime"":""nonexistent""}";
-        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
         var createResponse = await _httpClient!.PostAsync("/v1/tasks", content);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Accepted);
 

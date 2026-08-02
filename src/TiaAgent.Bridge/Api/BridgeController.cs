@@ -104,8 +104,10 @@ public sealed class BridgeController : IDisposable
 
         try
         {
-            // Bearer token authentication (except health check)
-            if (path != "/health")
+            // Bearer token authentication — only exempt well-known public endpoints.
+            // The public-endpoint check uses server-side constants so the bypass
+            // decision is not controlled by user-supplied data (CWE-807).
+            if (!IsPublicEndpoint(path))
             {
                 var (authenticated, errorType, errorMessage) = AuthenticateRequest(request);
                 if (!authenticated)
@@ -663,6 +665,16 @@ public sealed class BridgeController : IDisposable
             _logger.Error($"JSON deserialization failed: {ex.Message}", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Returns true for paths that are safe to serve without authentication.
+    /// The set is defined by server-side constants so that the bypass decision
+    /// is never controlled by user-supplied data (CWE-807).
+    /// </summary>
+    private static bool IsPublicEndpoint(string path)
+    {
+        return string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
