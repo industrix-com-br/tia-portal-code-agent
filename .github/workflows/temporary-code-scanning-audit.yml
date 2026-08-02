@@ -1,0 +1,94 @@
+name: Temporary code scanning audit
+
+on:
+  push:
+    branches:
+      - automation/code-scanning-audit-20260802
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Inspect open code scanning alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+          gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
+            | jq -s 'add // []' > open-alerts.json
+
+          count="$(jq 'length' open-alerts.json)"
+          echo "OPEN_ALERT_COUNT=$count"
+          echo "AUDIT_COMMIT=$(git rev-parse HEAD)"
+          echo "AUDIT_BASE_MAIN=$(git rev-parse origin/main)"
+
+          if [ "$count" -eq 0 ]; then
+            echo "No open code scanning alerts."
+            exit 0
+          fi
+
+          jq -c '.[]' open-alerts.json | while IFS= read -r alert; do
+            number="$(jq -r '.number' <<<"$alert")"
+            rule_id="$(jq -r '.rule.id // "unknown"' <<<"$alert")"
+            rule_name="$(jq -r '.rule.name // "unknown"' <<<"$alert")"
+            severity="$(jq -r '.rule.security_severity_level // .rule.severity // "unknown"' <<<"$alert")"
+            tool="$(jq -r '.tool.name // "unknown"' <<<"$alert")"
+            created_at="$(jq -r '.created_at // "unknown"' <<<"$alert")"
+            updated_at="$(jq -r '.updated_at // "unknown"' <<<"$alert")"
+            path="$(jq -r '.most_recent_instance.location.path // ""' <<<"$alert")"
+            start_line="$(jq -r '.most_recent_instance.location.start_line // 1' <<<"$alert")"
+            end_line="$(jq -r '.most_recent_instance.location.end_line // .most_recent_instance.location.start_line // 1' <<<"$alert")"
+            ref="$(jq -r '.most_recent_instance.ref // "unknown"' <<<"$alert")"
+            commit_sha="$(jq -r '.most_recent_instance.commit_sha // "unknown"' <<<"$alert")"
+            message="$(jq -r '.most_recent_instance.message.text // ""' <<<"$alert")"
+            instance_state="$(jq -r '.most_recent_instance.state // "unknown"' <<<"$alert")"
+
+            echo ""
+            echo "===== ALERT #$number ====="
+            echo "RULE_ID=$rule_id"
+            echo "RULE_NAME=$rule_name"
+            echo "SEVERITY=$severity"
+            echo "TOOL=$tool"
+            echo "CREATED_AT=$created_at"
+            echo "UPDATED_AT=$updated_at"
+            echo "INSTANCE_STATE=$instance_state"
+            echo "INSTANCE_REF=$ref"
+            echo "INSTANCE_COMMIT=$commit_sha"
+            echo "PATH=$path"
+            echo "LINES=$start_line-$end_line"
+            echo "MESSAGE=$message"
+
+            if [ -n "$path" ] && [ -f "$path" ]; then
+              echo "CURRENT_FILE_EXISTS=true"
+              current_lines="$(wc -l < "$path" | tr -d ' ')"
+              echo "CURRENT_FILE_LINES=$current_lines"
+
+              from=$((start_line > 8 ? start_line - 8 : 1))
+              to=$((end_line + 8))
+              if [ "$to" -gt "$current_lines" ]; then
+                to="$current_lines"
+              fi
+
+              echo "--- CURRENT_CONTEXT_BEGIN ---"
+              nl -ba "$path" | sed -n "${from},${to}p"
+              echo "--- CURRENT_CONTEXT_END ---"
+            else
+              echo "CURRENT_FILE_EXISTS=false"
+            fi
+
+            echo "ALERT_JSON=$(jq -c '.' <<<"$alert")"
+          done
